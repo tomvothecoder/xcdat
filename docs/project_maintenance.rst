@@ -23,7 +23,7 @@ Releasing a New Version
 
   ::
 
-      # Exclude "v" and <version> should match step 2
+      # Exclude "v" and <version> should match step 3.
       # --no-tag is required since tagging is handled in step 5.
       tbump <version> --no-tag
 

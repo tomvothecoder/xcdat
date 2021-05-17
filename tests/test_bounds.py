@@ -108,15 +108,15 @@ class TestDatasetBoundsAccessor:
 
         ds = ds.bounds._add_bounds("lat")
         assert ds.lat_bnds.equals(lat_bnds)
-        assert ds.lat_bnds.is_generated
+        assert ds.lat_bnds.is_generated == "True"
 
         ds = ds.bounds._add_bounds("lon")
         assert ds.lon_bnds.equals(lon_bnds)
-        assert ds.lon_bnds.is_generated
+        assert ds.lon_bnds.is_generated == "True"
 
         ds = ds.bounds._add_bounds("time")
         assert ds.time_bnds.equals(time_bnds)
-        assert ds.time_bnds.is_generated
+        assert ds.time_bnds.is_generated == "True"
 
     def test__get_coord(self):
         ds = self.ds.copy()

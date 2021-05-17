@@ -142,7 +142,9 @@ class DatasetBoundsAccessor:
         try:
             bounds = self._dataset.cf.get_bounds(coord)
         except KeyError:
-            raise KeyError(f"{coord} bounds were not found, they must be added.")
+            raise KeyError(
+                f"{coord.capitalize()} bounds were not found, they must be added."
+            )
 
         return bounds
 

@@ -29,6 +29,8 @@ time_cf = xr.DataArray(
         datetime(2000, 10, 1),
         datetime(2000, 11, 1),
         datetime(2000, 12, 1),
+        datetime(2001, 1, 1),
+        datetime(2001, 2, 1),
     ],
     dims=["time"],
     attrs={
@@ -38,7 +40,7 @@ time_cf = xr.DataArray(
     },
 )
 time_non_cf = xr.DataArray(
-    data=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    data=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
     dims=["time"],
     attrs={
         "long_name": "time",
@@ -61,7 +63,9 @@ time_bnds = xr.DataArray(
         [datetime(2000, 8, 16, 12), datetime(2000, 9, 16)],
         [datetime(2000, 9, 16), datetime(2000, 10, 16, 12)],
         [datetime(2000, 10, 16, 12), datetime(2000, 11, 16)],
-        [datetime(2000, 11, 16), datetime(2000, 12, 16)],
+        [datetime(2000, 11, 16), datetime(2000, 12, 16, 12)],
+        [datetime(2000, 12, 16, 12), datetime(2001, 1, 16, 12)],
+        [datetime(2001, 1, 16, 12), datetime(2001, 2, 16, 12)],
     ],
     coords={"time": time_cf},
     dims=["time", "bnds"],
@@ -84,6 +88,8 @@ time_bnds_non_cf = xr.DataArray(
         [datetime(2000, 9, 16), datetime(2000, 10, 16, 12)],
         [datetime(2000, 10, 16, 12), datetime(2000, 11, 16)],
         [datetime(2000, 11, 16), datetime(2000, 12, 16)],
+        [datetime(2001, 12, 16), datetime(2001, 1, 16)],
+        [datetime(2001, 1, 16), datetime(2001, 2, 15)],
     ],
     coords={"time": time_non_cf},
     dims=["time", "bnds"],
@@ -104,7 +110,6 @@ lat_bnds = xr.DataArray(
     dims=["lat", "bnds"],
     attrs={"is_generated": "True"},
 )
-
 
 # LONGITUDE
 # =========
@@ -132,14 +137,14 @@ lon_bnds = xr.DataArray(
 # =========
 ts_cf = xr.DataArray(
     name="ts",
-    data=np.ones((12, 4, 4)),
+    data=np.ones((14, 4, 4)),
     coords={"time": time_cf, "lat": lat, "lon": lon},
     dims=["time", "lat", "lon"],
 )
 
 ts_non_cf = xr.DataArray(
     name="ts",
-    data=np.ones((12, 4, 4)),
+    data=np.ones((14, 4, 4)),
     coords={"time": time_non_cf, "lat": lat, "lon": lon},
     dims=["time", "lat", "lon"],
 )
