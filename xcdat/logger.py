@@ -42,7 +42,6 @@ def setup_custom_logger(name: str, propagate: bool = False) -> logging.Logger:
     continue running:
 
     >>> logger.critical("")
-
     """
     log_format = "%(asctime)s [%(levelname)s]: %(filename)s(%(funcName)s:%(lineno)s) >> %(message)s"
     log_filemode = "w"  # w: overwrite; a: append

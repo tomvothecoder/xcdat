@@ -72,9 +72,6 @@ docs/generated
 # PyBuilder
 target/
 
-# Ad-hoc QA
-qa/
-
 # Jupyter Notebook
 .ipynb_checkpoints
 
