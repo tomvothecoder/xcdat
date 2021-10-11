@@ -25,17 +25,7 @@ FREQUENCIES = ("hour", "day", "month", "season", "year", "month")
 # Type alias representing xarray DateTime components.
 DateTimeComponent = Literal["hour", "day", "month", "season", "year"]
 
-# Maps available frequencies to xarray DateTime components for xarray operations.
-# This is simple groupby
-# TODO: Add support for custom seasons freq
-# TODO: Add support for diurnalNNN freq
-FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
-    "day": ("month", "day"),
-    "season": ("season",),
-    "month": ("month",),
-}
-
-# DJF CLIMATOLOGY SPECIFIC
+# DJF SPECIFIC
 # ========================
 # Type alias for the DJF season being continuous or discontinuous.
 DJFType = Literal["cont", "discont"]
@@ -43,122 +33,31 @@ DJFType = Literal["cont", "discont"]
 DJF_TYPES = get_args(DJFType)
 
 
-@xr.register_dataset_accessor("climo")
-class DatasetClimatologyAccessor:
+class DatasetTimeAverageAccessor:
     def __init__(self, dataset: xr.Dataset):
         self._dataset: xr.Dataset = dataset
 
-    def cycle(
-        self,
-        freq: Frequency,
-        data_var: str = None,
-        is_weighted: bool = True,
-        djf_type: DJFType = "cont",
-    ) -> xr.Dataset:
-        """Calculates a data variable's climatology cycle.
-
-        The original data variable is preserved, which is used for calculating
-        departure.
+    def _validate_inputs(self, freq: Frequency, djf_type: DJFType):
+        """Validates inputs for time averaging operations.
 
         Parameters
         ----------
         freq : Frequency
-            The frequency of time to group by. Available aliases:
-            - ``"day"`` for daily cycle climatology.
-            - ``"season"` for seasonal cycle climatology.
-            - ``"month"`` for annual cycle climatology.
-            - ``"JAN", "FEB", ..., or "DEC"`` for specific monthly climatology.
-            - Averages the month across all seasons.
-            - ``"DJF", "MAM", "JJA", or "SON"`` for specific season climatology.
-            - Average the season across all years.
-
-            Refer to ``FREQUENCIES`` for a complete list of available options.
-        data_var: Optional[str], optional
-            The key of the data variable in the dataset to calculate climatology
-            on. If None, an inference to the desired data variable is attempted
-            with the Dataset's "xcdat_infer" attr, by default None.
-        is_weighted : bool, optional
-            Perform grouping using weighted averages, by default True.
-            Time bounds, leap years, and month lengths are considered.
-        djf_type : DJFType, optional
+            The frequency of time to group by.
+        djf_type : DJFType
             Whether the DJF season is continuous ("cont", previous year Dec) or
             discontinuous ("discont", same year Dec), by default ``"cont"``.
 
-            - ``cont"`` for a continuous DJF (previous year Dec)
-            - ``"discont"`` for a discontinuous DJF (same year Dec)
-
-            Seasonally continuous December (``"cont"``) refers to continuity
-            between December and January. DJF starts on the first year Dec and
-            second year Jan/Feb, and ending on the second to last year Dec and
-            last year Jan + Feb). Incomplete seasons are dropped, which includes
-            the start year Jan/ Feb and end year Dec
-
-            - Example Date Range: Jan/2015 - Dec/2017
-            - Dropped incomplete seasons -> Jan/2015, Feb/2015, and Dec/2017
-
-            - Start -> Dec/2015, Jan/2016, Feb/2016
-            - End -> Dec/2016, Jan/2017, Feb/2017
-
-            Seasonally discontinuous December (``"discont"``) refers to
-            discontinuity between Feb and Dec. DJF starts on the first year
-            Jan/Feb/Dec, and ending on the last year Jan/Feb/Dec. This is the
-            default xarray behavior when grouping by season.
-
-            - Example Date Range: Jan/2015 - Dec/2017
-
-            - Start -> Jan/2015, Feb/2015, Dec/2015
-            - End -> Jan/2017, Feb/2017, Dec/2017
-
-        Returns
-        -------
-        xr.Dataset
-            Dataset containing the climatology cycle for a variable.
-
         Raises
         ------
-        ValueError
-            If incorrect ``frequency`` argument is passed.
         KeyError
-            If the dataset does not have "time" axis.
-
-        Examples
-        --------
-        Import:
-
-        >>> import xarray as xr
-        >>> from xcdat.climatology import climatology, departure
-        >>> ds = xr.open_dataset("file_path")
-
-        Get daily, seasonal, or annual weighted climatology for a variable:
-
-        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts")
-        >>> ds_climo_daily.ts
-        >>>
-        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts")
-        >>> ds_climo_seasonal.ts
-        >>>
-        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts")
-        >>> ds_climo_annual.ts
-
-        Get monthly, seasonal, or month unweighted climatology for a variable:
-        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts", is_weighted=False)
-        >>> ds_climo_daily.ts
-        >>>
-        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts", is_weighted=False)
-        >>> ds_climo_seasonal.ts
-        >>>
-        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts", is_weighted=False)
-        >>> ds_climo_annual.ts
-
-
-        Access Dataset attribute for climatology operation info:
-
-        >>> ds_climo_monthly.ts.operation
-        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
-        >>> ds_climo_monthly.ts.attrs["operation"]
-        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+            If the Dataset does not have a "time" dimension.
+        ValueError
+            If an incorrect ``freq`` arg was passed.
+        ValueError
+            If an incorrect ``djf_type`` arg was passed.
         """
-        # TODO: Add support for climatology year chunking
+
         if self._dataset.cf.dims.get("time") is None:
             raise KeyError(
                 "This dataset does not have a 'time' dimension. Cannot calculate climatology."
@@ -176,91 +75,10 @@ class DatasetClimatologyAccessor:
                 f"Incorrect `djf_type` argument. Supported DJF types include: {djf_types}"
             )
 
-        ds_climo = self._dataset.copy()
-        da_data_var = get_data_var(ds_climo, data_var)
-        ds_climo[data_var] = self._group_data(
-            da_data_var.copy(), "climatology", freq, is_weighted, djf_type
-        )
-        # Preserve the original variable so that is can be used for calculating
-        # departure.
-        ds_climo[f"{data_var}_original"] = da_data_var
-        return ds_climo
-
-    def departure(self, data_var: str = None) -> xr.Dataset:
-        """Calculates departures (anomalies) for a data variable's climatology.
-
-        In climatology, “anomalies” refer to the difference between observations and
-        typical weather for a particular season.
-
-        The data variable from the dataset is grouped used the same frequency and
-        weights as the data variable climatology. Afterwards, the departure is
-        derived using the formula: variable - variable climatology.
-
-        Parameters
-        ----------
-        data_var: Optional[str], optional
-            The key of the data variable in the dataset to calculate climatology
-            on. If None, an inference to the desired data variable is attempted
-            with the Dataset's "xcdat_infer" attr, by default None.
-
-        Returns
-        -------
-        xr.Dataset
-            The Dataset containing the climatology departure between the
-            original data variable and the data variable climatology.
-
-        Examples
-        --------
-        Import:
-
-        >>> import xarray as xr
-        >>> from xcdat.climatology import climatology, departure
-
-        Get departure for any time frequency:
-
-        >>> ds = xr.open_dataset("file_path")
-        >>> ts_climo = climatology(ds, "ts", "month")
-        >>> ts_departure = departure(ds, ts_climo)
-
-        Access attribute for info on departure operation:
-
-        >>> ts_month_climo.operation
-        {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
-        >>> ts_month_climo.attrs["operation"]
-        {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
-        """
-        # Use the climatology data variable to extract the climatology info.
-        da_data_var = get_data_var(self._dataset, data_var)
-        climo_info = da_data_var.attrs.get("operation")
-        if climo_info is None:
-            raise KeyError(
-                f"The data var, '{da_data_var.name}', does not contain the "
-                "'operation' attribute which describes the climatology operation. "
-                f"Make sure to run the `ds.climo.cycle()` on '{da_data_var.name}' first "
-                "before calculating its departure."
-            )
-
-        # Group the variable using the climatology information.
-        data_var_og = self._dataset[f"{da_data_var.name}_original"]
-        data_var_grouped = self._group_data(
-            data_var_og,
-            "departure",
-            climo_info["frequency"],
-            climo_info["is_weighted"],
-            climo_info.get("djf_type"),
-        ).rename("ts")
-
-        # Calculate departure by subtracting the grouped data var with the
-        # climatology data var.
-        ds_departure = self._dataset.copy()
-        with xr.set_options(keep_attrs=True):
-            ds_departure[da_data_var.name] = data_var_grouped - da_data_var
-        return ds_departure
-
     def _group_data(
         self,
         data_var: xr.DataArray,
-        operation_type: Literal["climatology", "departure"],
+        operation_type: Literal["climatology", "departure", "timeseries_avg"],
         freq: Frequency,
         is_weighted: bool,
         djf_type: Optional[DJFType] = "cont",
@@ -276,7 +94,7 @@ class DatasetClimatologyAccessor:
         ----------
         data_var : xr.DataArray
         The data variable to perform group operation on.
-        operation_type : Literal["climatology", "departure"]
+        operation_type : Literal["climatology", "departure", "timeseries_avg]
             The calculation type.
         freq : Frequency
             The frequency of time to group on.
@@ -445,7 +263,7 @@ class DatasetClimatologyAccessor:
         """
         data = []
         time_dim_key = data_var.cf["T"].name
-        datetime_components = FREQS_TO_DATETIME[freq]
+        datetime_components = DatasetClimatologyAccessor.FREQS_TO_DATETIME[freq]
 
         for component in datetime_components:
             data.append(data_var[f"{time_dim_key}.{component}"].data)
@@ -460,7 +278,7 @@ class DatasetClimatologyAccessor:
     def _add_operation_attrs(
         self,
         data_var: xr.DataArray,
-        operation_type: Literal["climatology", "departure"],
+        operation_type: Literal["climatology", "departure", "timeseries_avg"],
         frequency: Frequency,
         is_weighted: bool,
         djf_type: Optional[DJFType],
@@ -474,7 +292,7 @@ class DatasetClimatologyAccessor:
         ----------
         data_var : xr.DataArray
             The data variable.
-        operation_type : Literal["climatology", "departure"],
+        operation_type : Literal["climatology", "departure", "timeseries_avg"],
             The calculation type.
         frequency : Frequency
             The frequency of time.
@@ -511,3 +329,248 @@ class DatasetClimatologyAccessor:
         if frequency == "season":
             data_var.attrs["operation"].update({"djf_type": djf_type})
         return data_var
+
+
+@xr.register_dataset_accessor("climo")
+class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
+    # Maps available frequencies to xarray DateTime components for xarray operations.
+    # This is simple groupby
+    # TODO: Add support for custom seasons freq
+    # TODO: Add support for diurnalNNN freq
+    FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
+        "day": ("month", "day"),
+        "season": ("season",),
+        "month": ("month",),
+    }
+
+    def __init__(self, dataset: xr.Dataset):
+        self._dataset: xr.Dataset = dataset
+
+    def cycle(
+        self,
+        freq: Frequency,
+        data_var: Optional[str] = None,
+        is_weighted: bool = True,
+        djf_type: DJFType = "cont",
+    ) -> xr.Dataset:
+        """Calculates a data variable's climatology cycle.
+
+        The original data variable is preserved, which is used for calculating
+        departure.
+
+        Parameters
+        ----------
+        freq : Frequency
+            The frequency of time to group by. Available aliases:
+            - ``"day"`` for daily cycle climatology.
+            - ``"season"` for seasonal cycle climatology.
+            - ``"month"`` for annual cycle climatology.
+            - ``"JAN", "FEB", ..., or "DEC"`` for specific monthly climatology.
+            - Averages the month across all seasons.
+            - ``"DJF", "MAM", "JJA", or "SON"`` for specific season climatology.
+            - Average the season across all years.
+
+            Refer to ``FREQUENCIES`` for a complete list of available options.
+        data_var: Optional[str], optional
+            The key of the data variable in the dataset to calculate climatology
+            on. If None, an inference to the desired data variable is attempted
+            with the Dataset's "xcdat_infer" attr, by default None.
+        is_weighted : bool, optional
+            Perform grouping using weighted averages, by default True.
+            Time bounds, leap years, and month lengths are considered.
+        djf_type : DJFType, optional
+            Whether the DJF season is continuous ("cont", previous year Dec) or
+            discontinuous ("discont", same year Dec), by default ``"cont"``.
+
+            - ``cont"`` for a continuous DJF (previous year Dec)
+            - ``"discont"`` for a discontinuous DJF (same year Dec)
+
+            Seasonally continuous December (``"cont"``) refers to continuity
+            between December and January. DJF starts on the first year Dec and
+            second year Jan/Feb, and ending on the second to last year Dec and
+            last year Jan + Feb). Incomplete seasons are dropped, which includes
+            the start year Jan/ Feb and end year Dec
+
+            - Example Date Range: Jan/2015 - Dec/2017
+            - Dropped incomplete seasons -> Jan/2015, Feb/2015, and Dec/2017
+
+            - Start -> Dec/2015, Jan/2016, Feb/2016
+            - End -> Dec/2016, Jan/2017, Feb/2017
+
+            Seasonally discontinuous December (``"discont"``) refers to
+            discontinuity between Feb and Dec. DJF starts on the first year
+            Jan/Feb/Dec, and ending on the last year Jan/Feb/Dec. This is the
+            default xarray behavior when grouping by season.
+
+            - Example Date Range: Jan/2015 - Dec/2017
+
+            - Start -> Jan/2015, Feb/2015, Dec/2015
+            - End -> Jan/2017, Feb/2017, Dec/2017
+
+        Returns
+        -------
+        xr.Dataset
+            Dataset containing the climatology cycle for a variable.
+
+        Raises
+        ------
+        ValueError
+            If incorrect ``frequency`` argument is passed.
+        KeyError
+            If the dataset does not have "time" axis.
+
+        Examples
+        --------
+        Import:
+
+        >>> import xarray as xr
+        >>> from xcdat.climatology import climatology, departure
+        >>> ds = xr.open_dataset("file_path")
+
+        Get daily, seasonal, or annual weighted climatology for a variable:
+
+        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts")
+        >>> ds_climo_daily.ts
+        >>>
+        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts")
+        >>> ds_climo_seasonal.ts
+        >>>
+        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts")
+        >>> ds_climo_annual.ts
+
+        Get monthly, seasonal, or month unweighted climatology for a variable:
+        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts", is_weighted=False)
+        >>> ds_climo_daily.ts
+        >>>
+        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts", is_weighted=False)
+        >>> ds_climo_seasonal.ts
+        >>>
+        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts", is_weighted=False)
+        >>> ds_climo_annual.ts
+
+
+        Access Dataset attribute for climatology operation info:
+
+        >>> ds_climo_monthly.ts.operation
+        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+        >>> ds_climo_monthly.ts.attrs["operation"]
+        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+        """
+        # TODO: Add support for climatology year chunking
+        self._validate_inputs(freq, djf_type)
+        ds_climo = self._dataset.copy()
+        da_data_var = get_data_var(ds_climo, data_var)
+
+        # Calculate data variable climatology and preserve the original variable
+        # for calculating departure.
+        ds_climo[data_var] = self._group_data(
+            da_data_var.copy(), "climatology", freq, is_weighted, djf_type
+        )
+        ds_climo[f"{data_var}_original"] = da_data_var
+        return ds_climo
+
+    def departure(self, data_var: Optional[str] = None) -> xr.Dataset:
+        """Calculates departures (anomalies) for a data variable's climatology.
+
+        In climatology, “anomalies” refer to the difference between observations and
+        typical weather for a particular season.
+
+        The data variable from the dataset is grouped used the same frequency and
+        weights as the data variable climatology. Afterwards, the departure is
+        derived using the formula: variable - variable climatology.
+
+        Parameters
+        ----------
+        data_var: Optional[str], optional
+            The key of the data variable in the dataset to calculate climatology
+            on. If None, an inference to the desired data variable is attempted
+            with the Dataset's "xcdat_infer" attr, by default None.
+
+        Returns
+        -------
+        xr.Dataset
+            The Dataset containing the climatology departure between the
+            original data variable and the data variable climatology.
+
+        Examples
+        --------
+        Import:
+
+        >>> import xarray as xr
+        >>> from xcdat.climatology import climatology, departure
+
+        Get departure for any time frequency:
+
+        >>> ds = xr.open_dataset("file_path")
+        >>> ts_climo = climatology(ds, "ts", "month")
+        >>> ts_departure = departure(ds, ts_climo)
+
+        Access attribute for info on departure operation:
+
+        >>> ts_month_climo.operation
+        {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
+        >>> ts_month_climo.attrs["operation"]
+        {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
+        """
+        # Use the climatology data variable to extract the climatology info.
+        da_data_var = get_data_var(self._dataset, data_var)
+        climo_info = da_data_var.attrs.get("operation")
+        if climo_info is None:
+            raise KeyError(
+                f"The data var, '{da_data_var.name}', does not contain the "
+                "'operation' attribute which describes the climatology operation. "
+                f"Make sure to run the `ds.climo.cycle()` on '{da_data_var.name}' first "
+                "before calculating its departure."
+            )
+
+        # Group the variable using the climatology information.
+        data_var_og = self._dataset[f"{da_data_var.name}_original"]
+        data_var_grouped = self._group_data(
+            data_var_og,
+            "departure",
+            climo_info["frequency"],
+            climo_info["is_weighted"],
+            climo_info.get("djf_type"),
+        ).rename("ts")
+
+        # Calculate departure by subtracting the grouped data var with the
+        # climatology data var.
+        ds_departure = self._dataset.copy()
+        with xr.set_options(keep_attrs=True):
+            ds_departure[da_data_var.name] = data_var_grouped - da_data_var
+        return ds_departure
+
+
+@xr.register_dataset_accessor("timeseries")
+class DatasetTimeseriesAverageAccessor(DatasetTimeAverageAccessor):
+    # Maps available frequencies to xarray DateTime components for xarray operations.
+    # This is simple groupby
+    # TODO: Add support for custom seasons
+    # TODO: Add support for Nhour
+    FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
+        "hour": ("year", "month", "day", "hour"),
+        "day": ("year", "month", "day"),
+        "season": ("year", "season"),
+        "month": ("year", "month"),
+        "year": ("year",),
+    }
+
+    def __init__(self, dataset: xr.Dataset):
+        self._dataset: xr.Dataset = dataset
+
+    def avg(
+        self,
+        freq: Frequency,
+        data_var: Optional[str] = None,
+        is_weighted: bool = True,
+        djf_type: DJFType = "cont",
+    ):
+        self._validate_inputs(freq, djf_type)
+
+        ds = self._dataset.copy()
+        da_data_var = get_data_var(ds, data_var)
+
+        ds[data_var] = self._group_data(
+            da_data_var.copy(), "timeseries_avg", freq, is_weighted, djf_type
+        )
+        return ds

@@ -6,7 +6,7 @@ import pytest
 import xarray as xr
 
 from tests.fixtures import generate_dataset
-from xcdat.climatology import DatasetClimatologyAccessor
+from xcdat.time_avg import DatasetClimatologyAccessor
 
 
 class TestDatasetClimatologyAccessor:
