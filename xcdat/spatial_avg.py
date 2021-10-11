@@ -7,7 +7,7 @@ import numpy as np
 import xarray as xr
 from typing_extensions import Literal, TypedDict, get_args
 
-from xcdat.dataset import get_inferred_var
+from xcdat.dataset import get_data_var
 
 #: Type alias for a dictionary of axes keys mapped to their bounds.
 AxisWeights = Dict[Hashable, xr.DataArray]
@@ -50,10 +50,9 @@ class DatasetSpatialAverageAccessor:
         Parameters
         ----------
         data_var: Optional[str], optional
-            The name of the data variable inside the dataset to spatially
+            The key of the data variable inside the dataset to spatially
             average. If None, an inference to the desired data variable is
-            attempted with the Dataset's "xcdat_infer" attr and
-            ``get_inferred_var()``, by default None.
+            attempted with the Dataset's "xcdat_infer" attr, by default None.
         axis : Union[List[SupportedAxes], SupportedAxes]
             List of axis dimensions or single axes dimension to average over.
             For example, ["lat", "lon"]  or "lat", by default ["lat", "lon"].
@@ -127,16 +126,7 @@ class DatasetSpatialAverageAccessor:
         >>>     weights=weights)["tas"]
         """
         dataset = self._dataset.copy()
-
-        if data_var is None:
-            da_data_var = get_inferred_var(dataset)
-        else:
-            da_data_var = dataset.get(data_var, None)
-            if da_data_var is None:
-                raise KeyError(
-                    f"The data variable '{data_var}' does not exist in the dataset."
-                )
-
+        da_data_var = get_data_var(dataset, data_var)
         axis = self._validate_axis(da_data_var, axis)
 
         if weights is None:

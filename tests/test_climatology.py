@@ -29,22 +29,54 @@ class TestDatasetClimatologyAccessor:
         ds = ds.drop_dims("time")
 
         with pytest.raises(KeyError):
-            ds.climo.cycle("ts", "season")
+            ds.climo.cycle("season", "ts")
 
     def test_raises_error_with_incorrect_frequency_arg(self):
         with pytest.raises(ValueError):
-            self.ds.climo.cycle("ts", freq="incorrect_frequency")
+            self.ds.climo.cycle("incorrect_frequency", data_var="ts")
 
     def test_raises_error_with_incorrect_djf_type_arg(self):
         with pytest.raises(ValueError):
-            self.ds.climo.cycle("ts", freq="season", djf_type="incorrect")
+            self.ds.climo.cycle(freq="season", data_var="ts", djf_type="incorrect")
 
     def test_raises_error_if_data_var_does_not_exist_in_dataset(self):
         with pytest.raises(KeyError):
-            self.ds.climo.cycle("non_existent_var", freq="season")
+            self.ds.climo.cycle(
+                freq="season",
+                data_var="non_existent_var",
+            )
+
+    def test_climatology_month_weighted_inferred_var(self):
+        ds = self.ds.copy()
+        ds.attrs["xcdat_infer"] = "ts"
+
+        result_ds = self.ds.climo.cycle("month", data_var="ts")
+        expected_ds = self.ds.copy()
+        expected_ds["ts_original"] = expected_ds.ts.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((12, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "month": pd.MultiIndex.from_arrays(
+                    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
+                ),
+            },
+            dims=["month", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "climatology",
+                    "frequency": "month",
+                    "is_weighted": "True",
+                }
+            },
+        )
+
+        assert result_ds.identical(expected_ds)
 
     def test_climatology_month_weighted(self):
-        result_ds = self.ds.climo.cycle("ts", "month")
+        result_ds = self.ds.climo.cycle("month", data_var="ts")
 
         expected_ds = self.ds.copy()
         expected_ds["ts_original"] = expected_ds.ts.copy()
@@ -71,7 +103,7 @@ class TestDatasetClimatologyAccessor:
         assert result_ds.identical(expected_ds)
 
     def test_climatology_month_unweighted(self):
-        result_ds = self.ds.climo.cycle("ts", "month", is_weighted=False)
+        result_ds = self.ds.climo.cycle("month", data_var="ts", is_weighted=False)
 
         expected_ds = self.ds.copy()
         expected_ds["ts_original"] = expected_ds.ts.copy()
@@ -110,6 +142,64 @@ class TestDeparture:
     def test_raises_error_if_climatology_was_not_run_on_the_data_var_first(self):
         with pytest.raises(KeyError):
             self.ds.climo.departure("ts")
+
+    def test_weighted_seasonal_departure_with_continuous_djf_and_inferred_data_var(
+        self,
+    ):
+        # Create a post-climatology dataset.
+        ds = self.ds.copy()
+        ds.attrs["xcdat_infer"] = "ts"
+        ds["ts_original"] = ds.ts.copy()
+        ds["ts"] = xr.DataArray(
+            data=np.ones((4, 4, 4)),
+            coords={
+                "lat": ds.lat,
+                "lon": ds.lon,
+                "season": pd.MultiIndex.from_arrays([self.seasons]),
+            },
+            dims=["season", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "departure",
+                    "frequency": "season",
+                    "is_weighted": "True",
+                    "djf_type": "cont",
+                },
+            },
+        )
+
+        # Run climatology on the post-climatology dataset.
+        result = ds.climo.departure()
+
+        # Create an expected post-departure dataset.
+        expected = ds.copy()
+        expected["ts"] = xr.DataArray(
+            data=np.zeros((4, 4, 4)),
+            coords={
+                "lat": ds.lat,
+                "lon": ds.lon,
+                "season": pd.MultiIndex.from_arrays([self.seasons]),
+            },
+            dims=["season", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "departure",
+                    "frequency": "season",
+                    "is_weighted": "True",
+                    "djf_type": "cont",
+                },
+            },
+        )
+        expected.ts.data[0] = [
+            [-0.39869281, -0.39869281, -0.39869281, -0.39869281],
+            [-0.39869281, -0.39869281, -0.39869281, -0.39869281],
+            [-0.39869281, -0.39869281, -0.39869281, -0.39869281],
+            [-0.39869281, -0.39869281, -0.39869281, -0.39869281],
+        ]
+
+        # Check all float values are close (raises error if not).
+        xr.testing.assert_allclose(result, expected)
+        assert result.ts.attrs == expected.ts.attrs
 
     def test_weighted_seasonal_departure_with_continuous_djf(self):
         # Create a post-climatology dataset.

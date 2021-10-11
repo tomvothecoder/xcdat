@@ -9,6 +9,7 @@ import xarray as xr
 from typing_extensions import Literal, get_args
 
 from xcdat import bounds, logger  # noqa: F401
+from xcdat.dataset import get_data_var
 
 logging = logger.setup_custom_logger("root")
 
@@ -26,6 +27,8 @@ DateTimeComponent = Literal["hour", "day", "month", "season", "year"]
 
 # Maps available frequencies to xarray DateTime components for xarray operations.
 # This is simple groupby
+# TODO: Add support for custom seasons freq
+# TODO: Add support for diurnalNNN freq
 FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
     "day": ("month", "day"),
     "season": ("season",),
@@ -47,8 +50,8 @@ class DatasetClimatologyAccessor:
 
     def cycle(
         self,
-        var_name: str,
         freq: Frequency,
+        data_var: str = None,
         is_weighted: bool = True,
         djf_type: DJFType = "cont",
     ) -> xr.Dataset:
@@ -59,8 +62,6 @@ class DatasetClimatologyAccessor:
 
         Parameters
         ----------
-        var_name: str
-            The variable name in the Dataset to calculate climatology cycle for.
         freq : Frequency
             The frequency of time to group by. Available aliases:
             - ``"day"`` for daily cycle climatology.
@@ -72,6 +73,10 @@ class DatasetClimatologyAccessor:
             - Average the season across all years.
 
             Refer to ``FREQUENCIES`` for a complete list of available options.
+        data_var: Optional[str], optional
+            The key of the data variable in the dataset to calculate climatology
+            on. If None, an inference to the desired data variable is attempted
+            with the Dataset's "xcdat_infer" attr, by default None.
         is_weighted : bool, optional
             Perform grouping using weighted averages, by default True.
             Time bounds, leap years, and month lengths are considered.
@@ -126,23 +131,23 @@ class DatasetClimatologyAccessor:
 
         Get daily, seasonal, or annual weighted climatology for a variable:
 
-        >>> ds_climo_daily = ds.climo.cycle("ts", "day")
+        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts")
         >>> ds_climo_daily.ts
         >>>
-        >>> ds_climo_seasonal = ds.climo.cycle("ts", "season")
+        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts")
         >>> ds_climo_seasonal.ts
         >>>
-        >>> ds_climo_annual = ds.climo.cycle("ts", "month")
+        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts")
         >>> ds_climo_annual.ts
 
         Get monthly, seasonal, or month unweighted climatology for a variable:
-        >>> ds_climo_daily = ds.climo.cycle("ts", "day", is_weighted=False)
+        >>> ds_climo_daily = ds.climo.cycle("day", data_var="ts", is_weighted=False)
         >>> ds_climo_daily.ts
         >>>
-        >>> ds_climo_seasonal = ds.climo.cycle("ts", "season", is_weighted=False)
+        >>> ds_climo_seasonal = ds.climo.cycle("season", data_var="ts", is_weighted=False)
         >>> ds_climo_seasonal.ts
         >>>
-        >>> ds_climo_annual = ds.climo.cycle("ts", "month", is_weighted=False)
+        >>> ds_climo_annual = ds.climo.cycle("month", data_var="ts", is_weighted=False)
         >>> ds_climo_annual.ts
 
 
@@ -153,9 +158,7 @@ class DatasetClimatologyAccessor:
         >>> ds_climo_monthly.ts.attrs["operation"]
         {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
         """
-        # TODO: Add years range
-        # TODO: Add custom seasons
-        # TODO: Custom season, diurnalNNN
+        # TODO: Add support for climatology year chunking
         if self._dataset.cf.dims.get("time") is None:
             raise KeyError(
                 "This dataset does not have a 'time' dimension. Cannot calculate climatology."
@@ -174,19 +177,16 @@ class DatasetClimatologyAccessor:
             )
 
         ds_climo = self._dataset.copy()
-        data_var = ds_climo.data_vars.get(var_name)
-        if data_var is None:
-            raise KeyError(f"Variable {var_name} does not exist in the dataset.")
-
-        ds_climo[var_name] = self._group_data(
-            data_var.copy(), "climatology", freq, is_weighted, djf_type
+        da_data_var = get_data_var(ds_climo, data_var)
+        ds_climo[data_var] = self._group_data(
+            da_data_var.copy(), "climatology", freq, is_weighted, djf_type
         )
         # Preserve the original variable so that is can be used for calculating
         # departure.
-        ds_climo[f"{var_name}_original"] = data_var.copy()
+        ds_climo[f"{data_var}_original"] = da_data_var
         return ds_climo
 
-    def departure(self, var_name: str) -> xr.Dataset:
+    def departure(self, data_var: str = None) -> xr.Dataset:
         """Calculates departures (anomalies) for a data variable's climatology.
 
         In climatology, “anomalies” refer to the difference between observations and
@@ -198,10 +198,10 @@ class DatasetClimatologyAccessor:
 
         Parameters
         ----------
-        dataset_climo : xr.Dataset
-            The climatology Dataset.
-        var_name: str
-            The name of the climatology variable.
+        data_var: Optional[str], optional
+            The key of the data variable in the dataset to calculate climatology
+            on. If None, an inference to the desired data variable is attempted
+            with the Dataset's "xcdat_infer" attr, by default None.
 
         Returns
         -------
@@ -230,18 +230,18 @@ class DatasetClimatologyAccessor:
         {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
         """
         # Use the climatology data variable to extract the climatology info.
-        data_var = self._dataset[var_name].copy()
-        climo_info = data_var.attrs.get("operation")
+        da_data_var = get_data_var(self._dataset, data_var)
+        climo_info = da_data_var.attrs.get("operation")
         if climo_info is None:
             raise KeyError(
-                f"The data var, '{var_name}', does not contain the "
+                f"The data var, '{da_data_var.name}', does not contain the "
                 "'operation' attribute which describes the climatology operation. "
-                f"Make sure to run the `ds.climo.cycle()` on '{var_name}' first "
+                f"Make sure to run the `ds.climo.cycle()` on '{da_data_var.name}' first "
                 "before calculating its departure."
             )
 
         # Group the variable using the climatology information.
-        data_var_og = self._dataset[f"{var_name}_original"]
+        data_var_og = self._dataset[f"{da_data_var.name}_original"]
         data_var_grouped = self._group_data(
             data_var_og,
             "departure",
@@ -254,7 +254,7 @@ class DatasetClimatologyAccessor:
         # climatology data var.
         ds_departure = self._dataset.copy()
         with xr.set_options(keep_attrs=True):
-            ds_departure[var_name] = data_var_grouped - data_var
+            ds_departure[da_data_var.name] = data_var_grouped - da_data_var
         return ds_departure
 
     def _group_data(

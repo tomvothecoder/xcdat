@@ -404,3 +404,34 @@ def get_inferred_var(dataset: xr.Dataset) -> xr.DataArray:
             "'xcdat_infer' for this operation."
         )
         return data_var.copy()
+
+
+def get_data_var(dataset: xr.Dataset, data_var: Optional[str]) -> xr.DataArray:
+    """Implicitly or explicitly gets a data variable in the Dataset by key.
+
+    Parameters
+    ----------
+    dataset : xr.Dataset
+        The Dataset.
+    data_var : Optional[str]
+        The data variable key.
+
+    Returns
+    -------
+    xr.DataArray
+        The data variable.
+
+    Raises
+    ------
+    KeyError
+        If the data variable does not exist in the Dataset.
+    """
+    if data_var is None:
+        da_data_var = get_inferred_var(dataset)
+    else:
+        da_data_var = dataset.get(data_var, None)
+        if da_data_var is None:
+            raise KeyError(
+                f"The data variable '{data_var}' does not exist in the Dataset."
+            )
+    return da_data_var.copy()

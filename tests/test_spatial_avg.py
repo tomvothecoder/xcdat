@@ -569,7 +569,7 @@ class TestAverager:
         result = self.ds.spatial._averager(self.ds.ts, axis=["lat"], weights=weights)
         expected = xr.DataArray(
             name="ts",
-            data=np.ones((12, 4)),
+            data=np.ones((14, 4)),
             coords={"time": self.ds.time, "lon": self.ds.lon},
             dims=["time", "lon"],
         )
@@ -586,7 +586,7 @@ class TestAverager:
         result = self.ds.spatial._averager(self.ds.ts, axis=["lon"], weights=weights)
         expected = xr.DataArray(
             name="ts",
-            data=np.ones((12, 4)),
+            data=np.ones((14, 4)),
             coords={"time": self.ds.time, "lat": self.ds.lat},
             dims=["time", "lat"],
         )
@@ -603,7 +603,7 @@ class TestAverager:
             self.ds.ts, axis=["lat", "lon"], weights=weights
         )
         expected = xr.DataArray(
-            name="ts", data=np.ones(12), coords={"time": self.ds.time}, dims=["time"]
+            name="ts", data=np.ones(14), coords={"time": self.ds.time}, dims=["time"]
         )
 
         assert result.identical(expected)
