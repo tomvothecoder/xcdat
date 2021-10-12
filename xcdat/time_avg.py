@@ -197,15 +197,26 @@ class TimeAverageAccessor:
 
         df = pd.DataFrame()
         for index, component in enumerate(datetime_components):
-            df[index] = data_var[f"{time_dim_key}.{component}"].data
+            df[component] = data_var[f"{time_dim_key}.{component}"].data
 
         # For continuous DJF seasons, shift Decembers over to the next year so
         # that grouping on the MultiIndex produces the correct results.
         if self.freq == "season" and self.djf_type == "cont":
             df = self._shift_djf_decembers(df)
 
-        self.time_multiindex = pd.MultiIndex.from_frame(df)
-        self.time_multiindex_name = "_".join(datetime_components)
+        # `pd.MultiIndex.from_frame()` generates the `names` of the MultiIndex
+        # using the DataFrame column names. However, this default behavior
+        # clashes with xarray because xarray also generates the `names` of the
+        # MultiIndex when assigning it to the data variable's coordinates.
+        # Xarray sees that the same `names` exist already, so it will throw
+        # `ValueError: conflicting MultiIndex level name(s):``.
+        # The workaround is to assign a placeholder for `names`, which will be
+        # overwritten by xarray once the MultiIndex is assigned to the
+        # data variable's coordinates.
+        # Related issue: https://github.com/pydata/xarray/issues/3659
+        placeholder_names = [(index, col) for index, col in enumerate(df.columns)]
+        self.time_multiindex = pd.MultiIndex.from_frame(df, names=placeholder_names)
+        self.time_multiindex_name = "_".join(df.columns)
 
     def _shift_djf_decembers(self, df_time: pd.DataFrame) -> pd.DataFrame:
         """Shifts Decembers over to the next year for continuous DJF seasons.
@@ -228,9 +239,9 @@ class TimeAverageAccessor:
         df_time.loc[df_time["month"] == 12, "year"] = df_time["year"] + 1
 
         if self.operation == "timeseries_avg":
-            df_time = df_time.drop("year")
+            df_time = df_time.drop("year", axis=1)
         elif self.operation in ["climatology", "departure"]:
-            df_time = df_time.drop(["year", "month"])
+            df_time = df_time.drop(["year", "month"], axis=1)
 
         return df_time
 
@@ -409,7 +420,7 @@ class TimeAverageAccessor:
 @xr.register_dataset_accessor("climo")
 class ClimatologyAccessor(TimeAverageAccessor):
     def __init__(self, dataset: xr.Dataset):
-        self._dataset: xr.Dataset = dataset
+        super(ClimatologyAccessor, self).__init__(dataset)
 
     def cycle(
         self,
@@ -530,7 +541,7 @@ class ClimatologyAccessor(TimeAverageAccessor):
         # Calculate data variable climatology and preserve the original variable
         # for calculating departure.
         ds_climo[data_var] = self._group_data(da_data_var.copy())
-        ds_climo[f"{data_var}_original"] = da_data_var
+        ds_climo[f"{data_var}_original"] = da_data_var.copy()
         return ds_climo
 
     def departure(self, data_var: Optional[str] = None) -> xr.Dataset:
@@ -589,12 +600,12 @@ class ClimatologyAccessor(TimeAverageAccessor):
             )
         self._validate_and_set_attrs(
             "departure",
-            climo_info["frequency"],
+            climo_info["freq"],
             climo_info["is_weighted"],
             climo_info.get("djf_type", "cont"),
         )
 
-        data_var_og = self._dataset[f"{da_data_var.name}_original"]
+        data_var_og = self._dataset[f"{da_data_var.name}_original"].copy()
         data_var_grouped = self._group_data(data_var_og).rename("ts")
 
         # Calculate departure by subtracting the grouped data var with the
@@ -610,7 +621,7 @@ class TimeseriesAverageAccessor(TimeAverageAccessor):
     """Class to represent TimeSeriesAverageAccessor"""
 
     def __init__(self, dataset: xr.Dataset):
-        self._dataset: xr.Dataset = dataset
+        super(TimeseriesAverageAccessor, self).__init__(dataset)
 
     def avg(
         self,
