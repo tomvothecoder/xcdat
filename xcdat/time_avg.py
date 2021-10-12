@@ -564,8 +564,8 @@ class ClimatologyAccessor(TimeAverageAccessor):
 
         # Calculate data variable climatology and preserve the original variable
         # for calculating departure.
-        ds_climo[data_var] = self._group_data(da_data_var.copy())
-        ds_climo[f"{data_var}_original"] = da_data_var.copy()
+        ds_climo[da_data_var.name] = self._group_data(da_data_var.copy())
+        ds_climo[f"{da_data_var.name}_original"] = da_data_var.copy()
         return ds_climo
 
     def departure(self, data_var: Optional[str] = None) -> xr.Dataset:
@@ -760,5 +760,5 @@ class TimeseriesAverageAccessor(TimeAverageAccessor):
         ds = self._dataset.copy()
         da_data_var = get_data_var(ds, data_var)
 
-        ds[data_var] = self._group_data(da_data_var.copy())
+        ds[da_data_var.name] = self._group_data(da_data_var.copy())
         return ds

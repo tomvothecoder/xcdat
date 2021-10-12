@@ -209,7 +209,101 @@ class TestTimeAverageAccessor:
             with pytest.raises(KeyError):
                 ds.climo._get_months_lengths()
 
-        def test_calculate_daily_climatology_weights(self):
+        def test_seasonal_climatology_weights(self):
+            ds = self.ds.copy()
+            ds.climo.operation = "climatology"
+            ds.climo.freq = "season"
+            ds.climo.is_weighted = "True"
+            ds.climo.djf_type = "cont"
+            ds.climo.time_multiindex = pd.MultiIndex.from_tuples(
+                [
+                    ("DJF",),
+                    ("DJF",),
+                    ("MAM",),
+                    ("MAM",),
+                    ("MAM",),
+                    ("JJA",),
+                    ("JJA",),
+                    ("JJA",),
+                    ("SON",),
+                    ("SON",),
+                    ("SON",),
+                    ("DJF",),
+                    ("DJF",),
+                    ("DJF",),
+                ],
+                names=[(0, "season")],
+            )
+            ds.climo.time_multiindex_name = "month"
+            expected = np.array(
+                [
+                    0.20261438,
+                    0.19607843,
+                    0.33333333,
+                    0.33333333,
+                    0.33333333,
+                    0.32967033,
+                    0.32967033,
+                    0.34065934,
+                    0.33333333,
+                    0.33333333,
+                    0.33333333,
+                    0.19607843,
+                    0.20261438,
+                    0.20261438,
+                ]
+            )
+            result = ds.climo.calculate_weights(self.ds["ts"])
+            assert np.allclose(result, expected)
+
+        def test_monthly_climatology_weights(self):
+            ds = self.ds.copy()
+            ds.climo.operation = "climatology"
+            ds.climo.freq = "month"
+            ds.climo.is_weighted = "True"
+            ds.climo.djf_type = "cont"
+            ds.climo.time_multiindex = pd.MultiIndex.from_tuples(
+                [
+                    (1,),
+                    (2,),
+                    (3,),
+                    (4,),
+                    (5,),
+                    (6,),
+                    (7,),
+                    (8,),
+                    (9,),
+                    (10,),
+                    (11,),
+                    (12,),
+                    (1,),
+                    (2,),
+                ],
+                names=[(0, "month")],
+            )
+            ds.climo.time_multiindex_name = "month"
+            expected = np.array(
+                [
+                    0.5,
+                    0.49180328,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.5,
+                    0.50819672,
+                ]
+            )
+            result = ds.climo.calculate_weights(self.ds["ts"])
+            assert np.allclose(result, expected)
+
+        def test_daily_climatology_weights(self):
             ds = self.ds.copy()
             ds.climo.operation = "climatology"
             ds.climo.freq = "day"
@@ -257,101 +351,39 @@ class TestTimeAverageAccessor:
             result = ds.climo.calculate_weights(self.ds["ts"])
             assert np.allclose(result, expected)
 
-        def test_calculate_climatology_monthly_weights(self):
-            ds = self.ds.copy()
-            ds.climo.operation = "climatology"
-            ds.climo.freq = "month"
-            ds.climo.is_weighted = "True"
-            ds.climo.djf_type = "cont"
-            ds.climo.time_multiindex = pd.MultiIndex.from_tuples(
-                [
-                    (1,),
-                    (2,),
-                    (3,),
-                    (4,),
-                    (5,),
-                    (6,),
-                    (7,),
-                    (8,),
-                    (9,),
-                    (10,),
-                    (11,),
-                    (12,),
-                    (1,),
-                    (2,),
-                ],
-                names=[(0, "month")],
-            )
-            ds.climo.time_multiindex_name = "month"
-            expected = np.array(
-                [
-                    0.5,
-                    0.49180328,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    1.0,
-                    0.5,
-                    0.50819672,
-                ]
-            )
-            result = ds.climo.calculate_weights(self.ds["ts"])
-            assert np.allclose(result, expected)
+        @pytest.mark.xfail
+        def test_annual_timeseries_weights(self):
+            assert 0
 
-        def test_calculate_seasonal_climatology_weights(self):
-            ds = self.ds.copy()
-            ds.climo.operation = "climatology"
-            ds.climo.freq = "season"
-            ds.climo.is_weighted = "True"
-            ds.climo.djf_type = "cont"
-            ds.climo.time_multiindex = pd.MultiIndex.from_tuples(
-                [
-                    ("DJF",),
-                    ("DJF",),
-                    ("MAM",),
-                    ("MAM",),
-                    ("MAM",),
-                    ("JJA",),
-                    ("JJA",),
-                    ("JJA",),
-                    ("SON",),
-                    ("SON",),
-                    ("SON",),
-                    ("DJF",),
-                    ("DJF",),
-                    ("DJF",),
-                ],
-                names=[(0, "season")],
-            )
-            ds.climo.time_multiindex_name = "month"
-            expected = np.array(
-                [
-                    0.20261438,
-                    0.19607843,
-                    0.33333333,
-                    0.33333333,
-                    0.33333333,
-                    0.32967033,
-                    0.32967033,
-                    0.34065934,
-                    0.33333333,
-                    0.33333333,
-                    0.33333333,
-                    0.19607843,
-                    0.20261438,
-                    0.20261438,
-                ]
-            )
-            result = ds.climo.calculate_weights(self.ds["ts"])
-            assert np.allclose(result, expected)
+        @pytest.mark.xfail
+        def test_monthly_timeseries_weights(self):
+            assert 0
 
-    class TestAddAttributes:
+        @pytest.mark.xfail
+        def test_seasonal_timeseries_weights_continuous_djf(self):
+            assert 0
+
+        @pytest.mark.xfail
+        def test_seasonal_timeseries_weights_discontinuous_djf(self):
+            assert 0
+
+        @pytest.mark.xfail
+        def test_custom_season_timeseries_weights(self):
+            assert 0
+
+        @pytest.mark.xfail
+        def test_daily_timeseries_weights(self):
+            assert 0
+
+        @pytest.mark.xfail
+        def test_hourly_timeseries_weights(self):
+            assert 0
+
+        @pytest.mark.xfail
+        def test_custom_hourly_timeseries_weights(self):
+            assert 0
+
+    class TestAddOperationAttributes:
         @pytest.fixture(autouse=True)
         def setup(self):
             self.ds = generate_dataset(cf_compliant=True, has_bounds=True)
@@ -420,11 +452,39 @@ class TestClimatologyAccessor:
                     data_var="non_existent_var",
                 )
 
-        def test_climatology_month_weighted_inferred_var(self):
+        def test_weighted_monthly_climatology_for_inferred_data_var(self):
             ds = self.ds.copy()
             ds.attrs["xcdat_infer"] = "ts"
 
+            result_ds = ds.climo.cycle("month")
+            expected_ds = ds.copy()
+            expected_ds["ts_original"] = expected_ds.ts.copy()
+            expected_ds["ts"] = xr.DataArray(
+                name="ts",
+                data=np.ones((12, 4, 4)),
+                coords={
+                    "lat": self.ds.lat,
+                    "lon": self.ds.lon,
+                    "month": pd.MultiIndex.from_arrays(
+                        [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
+                    ),
+                },
+                dims=["month", "lat", "lon"],
+                attrs={
+                    "operation": {
+                        "type": "climatology",
+                        "freq": "month",
+                        "is_weighted": "True",
+                        "time_multiindex_name": "month",
+                    }
+                },
+            )
+
+            assert result_ds.identical(expected_ds)
+
+        def test_weighted_monthly_climatology(self):
             result_ds = self.ds.climo.cycle("month", data_var="ts")
+
             expected_ds = self.ds.copy()
             expected_ds["ts_original"] = expected_ds.ts.copy()
             expected_ds["ts"] = xr.DataArray(
@@ -450,35 +510,7 @@ class TestClimatologyAccessor:
 
             assert result_ds.identical(expected_ds)
 
-        def test_climatology_month_weighted(self):
-            result_ds = self.ds.climo.cycle("month", data_var="ts")
-
-            expected_ds = self.ds.copy()
-            expected_ds["ts_original"] = expected_ds.ts.copy()
-            expected_ds["ts"] = xr.DataArray(
-                name="ts",
-                data=np.ones((12, 4, 4)),
-                coords={
-                    "lat": self.ds.lat,
-                    "lon": self.ds.lon,
-                    "month": pd.MultiIndex.from_arrays(
-                        [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]]
-                    ),
-                },
-                dims=["month", "lat", "lon"],
-                attrs={
-                    "operation": {
-                        "type": "climatology",
-                        "freq": "month",
-                        "is_weighted": "True",
-                        "time_multiindex_name": "month",
-                    }
-                },
-            )
-
-            assert result_ds.identical(expected_ds)
-
-        def test_climatology_month_unweighted(self):
+        def test_unweighted_monthly_climatology(self):
             result_ds = self.ds.climo.cycle("month", data_var="ts", is_weighted=False)
 
             expected_ds = self.ds.copy()
@@ -738,3 +770,33 @@ class TestClimatologyAccessor:
             )
 
             assert result.identical(expected)
+
+
+class TestTimeseriesAverageAccessor:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        pass
+
+    @pytest.mark.xfail
+    def test_annual_timeseries_avg(self):
+        assert 0
+
+    @pytest.mark.xfail
+    def test_seasonal_timeseries_avg(self):
+        assert 0
+
+    @pytest.mark.xfail
+    def test_monthly_timeseries_avg(self):
+        assert 0
+
+    @pytest.mark.xfail
+    def test_daily_timeseries_avg(self):
+        assert 0
+
+    @pytest.mark.xfail
+    def test_hourly_timeseries_avg(self):
+        assert 0
+
+    @pytest.mark.xfail
+    def test_custom_hourly_timeseries_avg(self):
+        assert 0
