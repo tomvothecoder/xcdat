@@ -50,7 +50,7 @@ class TimeAverageAccessor:
             # "year and "month" must be included to properly mask incomplete
             # seasons and shift over Decembers by year (for continuous DJF).
             # Both index levels is removed from the MultiIndex before grouping
-            # by "season.""
+            # on it. Refer to `_drop_season_multiindex_levels()`.
             "season": ("year", "season", "month"),
             "month": ("month",),
         },
@@ -66,8 +66,8 @@ class TimeAverageAccessor:
             "day": ("year", "month", "day"),
             # "month" must be included to properly mask incomplete seasons and
             # shift over Decembers by year (for continuous DJF). The "month"
-            # index level is removed from the MultiIndex before grouping by
-            # "season".
+            # index level is removed from the MultiIndex before grouping on it.
+            # Refer to `_drop_season_multiindex_levels()`.
             "season": ("year", "season", "month"),
             "month": ("year", "month"),
             "year": ("year",),
@@ -195,14 +195,18 @@ class TimeAverageAccessor:
             self.freq
         ]
 
+        # A DataFrame to store the DateTime components extracted from
+        # each object in the time coordinates. It is used to generate
+        # a Pandas MultiIndex for xarray grouping operations.
         df = pd.DataFrame()
-        for index, component in enumerate(datetime_components):
+        for component in datetime_components:
             df[component] = data_var[f"{time_dim_key}.{component}"].data
 
-        # For continuous DJF seasons, shift Decembers over to the next year so
-        # that grouping on the MultiIndex produces the correct results.
-        if self.freq == "season" and self.djf_type == "cont":
-            df = self._shift_djf_decembers(df)
+        if self.freq == "season":
+            if self.djf_type == "cont":
+                df = self._shift_decembers(df)
+            df = self._drop_season_df_cols(df)
+        self.df = df
 
         # `pd.MultiIndex.from_frame()` generates the `names` of the MultiIndex
         # using the DataFrame column names. However, this default behavior
@@ -218,7 +222,7 @@ class TimeAverageAccessor:
         self.time_multiindex = pd.MultiIndex.from_frame(df, names=placeholder_names)
         self.time_multiindex_name = "_".join(df.columns)
 
-    def _shift_djf_decembers(self, df_time: pd.DataFrame) -> pd.DataFrame:
+    def _shift_decembers(self, df_time: pd.DataFrame) -> pd.DataFrame:
         """Shifts Decembers over to the next year for continuous DJF seasons.
 
         Xarray defines the DJF season with the same year December, resulting in
@@ -237,12 +241,29 @@ class TimeAverageAccessor:
             The DataFrame with Decembers shifted over year.
         """
         df_time.loc[df_time["month"] == 12, "year"] = df_time["year"] + 1
+        return df_time
 
+    def _drop_season_df_cols(self, df_time: pd.DataFrame) -> pd.DataFrame:
+        """Drops columns from the season DataFrame based on the operation.
+
+        Specific columns are dropped because they are no longer necessary for
+        the creation of the seasonal MultiIndex.
+
+        Parameters
+        ----------
+        df_time : pd.DataFrame
+            The DataFrame generated from the time coordinates, with each column
+            storing the xarray DateTime component values.
+
+        Returns
+        -------
+        pd.DataFrame
+            The DataFrame with droppped levels.
+        """
         if self.operation == "timeseries_avg":
             df_time = df_time.drop("year", axis=1)
         elif self.operation in ["climatology", "departure"]:
             df_time = df_time.drop(["year", "month"], axis=1)
-
         return df_time
 
     def _mask_incomplete_djf(self, data_var: xr.DataArray) -> xr.DataArray:
@@ -345,10 +366,10 @@ class TimeAverageAccessor:
         np.testing.assert_allclose(actual_sum, expected_sum)
 
     def _groupby_multiindex(self, data_var: xr.DataArray) -> xr.DataArray:
-        """Groups a data variable by a pandas multiindex representing time.
+        """Groups a data variable by a Pandas MultiIndex for time coordinates.
 
-        For example, if you are performing a daily climatology cycle calculation,
-        the data must be grouped by the months and days.
+        For example, if you are performing a daily climatology cycle
+        calculation, the data must be grouped by the months and days.
 
         Exammple DateTime array representing "time" coordinates":
         ['1850-01-16T12:00:00.000000000', '1850-02-15T00:00:00.000000000',
@@ -367,7 +388,10 @@ class TimeAverageAccessor:
         xr.DataArray
             The data variable grouped by the frequency.
         """
-        data_var.coords[self.time_multiindex_name] = ("time", self.time_multiindex)
+        data_var.coords[self.time_multiindex_name] = (
+            data_var.cf["T"].name,
+            self.time_multiindex,
+        )
         data_var = data_var.groupby(self.time_multiindex_name)
 
         return data_var
