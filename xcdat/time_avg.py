@@ -1,6 +1,6 @@
 """Functions related to calculating climatology cycles and departures."""
 
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Union
 
 import cf_xarray as cfxr  # noqa: F401
 import numpy as np
@@ -13,40 +13,106 @@ from xcdat.dataset import get_data_var
 
 logging = logger.setup_custom_logger("root")
 
-# FREQUENCIES
+# Time Averaging Operations
+# =========================
+# Type alias for time averaging operations.
+Operation = Literal["climatology", "departure", "timeseries_avg"]
+
+# Frequencies
 # ===========
 # Type alias for all available frequencies.
 Frequency = Union[Literal["day", "month", "season", "year", "month"]]
 #: Tuple of available frequencies for the ``frequency`` param.
 FREQUENCIES = ("hour", "day", "month", "season", "year", "month")
 
-# DATETIME COMPONENTS
+# Datetime Components
 # ===================
 # Type alias representing xarray DateTime components.
 DateTimeComponent = Literal["hour", "day", "month", "season", "year"]
 
-# DJF SPECIFIC
-# ========================
+# DJF Season Types
+# ================
 # Type alias for the DJF season being continuous or discontinuous.
 DJFType = Literal["cont", "discont"]
 # Tuple of DJF season type params.
 DJF_TYPES = get_args(DJFType)
 
 
-class DatasetTimeAverageAccessor:
+class TimeAverageAccessor:
+    # Maps frequencies to xarray DateTime components, which are used to create
+    # a Pandas MultiIndex for time grouping operations.
+    # Source: https://xarray.pydata.org/en/stable/user-guide/time-series.html#datetime-components
+    FREQS_TO_MULTIINDEX = {
+        # TODO: Add support for custom seasons freq
+        # TODO: Add support for diurnalNNN freq
+        "climatology": {
+            "day": ("month", "day"),
+            # "year and "month" must be included to properly mask incomplete
+            # seasons and shift over Decembers by year (for continuous DJF).
+            # Both index levels is removed from the MultiIndex before grouping
+            # by "season.""
+            "season": ("year", "season", "month"),
+            "month": ("month",),
+        },
+        "departure": {
+            "day": ("month", "day"),
+            "season": ("year", "season", "month"),
+            "month": ("month",),
+        },
+        # TODO: Add support for custom seasons
+        # TODO: Add support for Nhour
+        "timeseries_avg": {
+            "hour": ("year", "month", "day", "hour"),
+            "day": ("year", "month", "day"),
+            # "month" must be included to properly mask incomplete seasons and
+            # shift over Decembers by year (for continuous DJF). The "month"
+            # index level is removed from the MultiIndex before grouping by
+            # "season".
+            "season": ("year", "season", "month"),
+            "month": ("year", "month"),
+            "year": ("year",),
+        },
+    }
+
     def __init__(self, dataset: xr.Dataset):
         self._dataset: xr.Dataset = dataset
 
-    def _validate_inputs(self, freq: Frequency, djf_type: DJFType):
-        """Validates inputs for time averaging operations.
+        # The time averaging operation performed.
+        self.operation: Operation
+        # The frequency of time to group by.
+        self.freq: Frequency
+        # Perform grouping using weighted averages, by default True.
+        self.is_weighted: bool = True
+        # Whether the DJF season is continuous ("cont", previous year Dec) or
+        # discontinuous ("discont", same year Dec), by default ``"cont"``.
+        self.djf_type: DJFType = "cont"
+        # A Pandas MultiIndex created from the time dimension for use in
+        # group by operations. Using a MultiIndex allows grouping by multiple
+        # DateTime components, such as year and month (native xarray does not
+        # support this).
+        self.time_multiindex: pd.MultiIndex
+        self.time_multiindex_name: str
+
+    def _validate_and_set_attrs(
+        self,
+        operation: Operation,
+        freq: Frequency,
+        is_weighted: bool,
+        djf_type: DJFType,
+    ):
+        """Validates inputs and sets their equivalent object attribute.
 
         Parameters
         ----------
+        operation: Operation
+            The time averaging operation being performed.
         freq : Frequency
             The frequency of time to group by.
+        is_weighted: bool
+            Perform weighted or unweighted averages.
         djf_type : DJFType
-            Whether the DJF season is continuous ("cont", previous year Dec) or
-            discontinuous ("discont", same year Dec), by default ``"cont"``.
+            Whether the DJF season is "cont" (continuous with previous year
+            December) or "discont" (discontinuous with same year Dec).
 
         Raises
         ------
@@ -57,7 +123,6 @@ class DatasetTimeAverageAccessor:
         ValueError
             If an incorrect ``djf_type`` arg was passed.
         """
-
         if self._dataset.cf.dims.get("time") is None:
             raise KeyError(
                 "This dataset does not have a 'time' dimension. Cannot calculate climatology."
@@ -75,130 +140,99 @@ class DatasetTimeAverageAccessor:
                 f"Incorrect `djf_type` argument. Supported DJF types include: {djf_types}"
             )
 
-    def _group_data(
-        self,
-        data_var: xr.DataArray,
-        operation_type: Literal["climatology", "departure", "timeseries_avg"],
-        freq: Frequency,
-        is_weighted: bool,
-        djf_type: Optional[DJFType] = "cont",
-    ) -> xr.DataArray:
+        self.operation = operation
+        self.freq = freq
+        self.is_weighted = is_weighted
+        self.djf_type = djf_type
+
+    def _group_data(self, data_var: xr.DataArray) -> xr.DataArray:
         """Groups data variables by a frequency to get their averages.
 
-        A Pandas MultiIndex is derived from the DateTime objects found in the
-        "time" dimension. This allows for grouping based on multiple DateTime
-        parameters (e.g., month and day), Lastly, information regarding the
-        operation is added to the data variable for reference.
+        A Pandas MultiIndex is derived from the DateTime64 objects found in the
+        "time" coordinates. Using the Pandas MultiIndex allows for grouping
+        based on multiple DateTime parameters, such as month and day.
+
+        Once the grouping operation is completed, the parameters of the
+        operation are stored within the data variable as an attribute.
 
         Parameters
         ----------
         data_var : xr.DataArray
-        The data variable to perform group operation on.
-        operation_type : Literal["climatology", "departure", "timeseries_avg]
-            The calculation type.
-        freq : Frequency
-            The frequency of time to group on.
-        is_weighted : bool
-            Perform grouping using weighted averages.
-        djf_type : Optional[DJFType], optional
-            Whether the DJF season is continuous (``"cont"``, previous year Dec)
-            or discontinuous (``"discont"``, same year Dec), by default
-            ``"cont"``.
+            The data variable to perform grouping operation on.
 
         Returns
         -------
         xr.DataArray
             The grouped data variable
         """
-        if is_weighted:
-            weights = self.calculate_weights(data_var, freq) if is_weighted else None
-            data_var *= weights
+        self._set_time_multiindex(data_var)
 
-        if freq == "season" and djf_type == "cont":
+        if self.freq == "season" and self.djf_type == "cont":
             data_var = self._mask_incomplete_djf(data_var)
 
-        data_var = self._groupby_multiindex(data_var, freq).sum()
-        data_var = self._add_operation_attrs(
-            data_var, operation_type, freq, is_weighted, djf_type
-        )
+        if self.is_weighted:
+            weights = self.calculate_weights(data_var)
+            data_var *= weights
+            data_var = self._groupby_multiindex(data_var).sum()
+        else:
+            data_var = self._groupby_multiindex(data_var).mean()
+
+        data_var = self._add_operation_attrs(data_var)
         return data_var
 
-    def calculate_weights(
-        self, data_var: xr.DataArray, freq: Frequency
-    ) -> xr.DataArray:
-        """Calculates weights for a Dataset based on a frequency of time.
-
-        Time bounds, leap years and number of days for each month are considered
-        during grouping. If the sum of the weights does not equal 1.0, an error will
-        be raised.
-
-        Parameters
-        ----------
-        ds : xr.Dataset
-            The dataset used for calculating the lengths of months with bounds.
-        data_var : xr.Dataset
-            The data variable to calculate weights for.
-        freq : Frequency
-            The frequency of time to group on.
-            Refer to ``FREQUENCIES`` for a complete list of available options.
-
-        Returns
-        -------
-        xr.DataArray
-            The weights based on a frequency of time.
+    def _set_time_multiindex(self, data_var: xr.DataArray):
         """
-        months_lengths = self._get_months_lengths()
-        months_lengths_grouped = self._groupby_multiindex(months_lengths, freq)
-
-        weights: xr.DataArray = months_lengths_grouped / months_lengths_grouped.sum()
-        self._validate_weights(data_var, weights, freq)
-        return weights
-
-    def _get_months_lengths(self) -> xr.DataArray:
-        """Get lengths of months based on the time coordinates of a dataset.
-
-        If time bounds exist, it will be used to generate the length of months. This
-        allows for a robust calculation of weights because different datasets could
-        record their time differently (e.g., at beginning/end/middle of each time
-        interval).
-
-        Parameters
-        ----------
-        ds : xr.Dataset
-            The dataset to get months' lengths from.
-
-        Returns
-        -------
-        xr.DataArray
-            The months' lengths for the dataset.
-        """
-        time_bounds = self._dataset.bounds.get_bounds("time")
-        months_lengths = (time_bounds[:, 1] - time_bounds[:, 0]).dt.days
-        return months_lengths
-
-    def _validate_weights(
-        self, data_var: xr.DataArray, weights: xr.DataArray, freq: Frequency
-    ):
-        """Validate that the sum of the weights for a dataset equals 1.0.
-
-        It generates the number of frequency groups after grouping by a frequency.
-        For example, if weights are being generated on a monthly basis, there are
-        12 group with each group representing a month in the year.
+        Creates a Pandas MultiIndex from the time coordinates and sets the
+        related object attributes.
 
         Parameters
         ----------
         data_var : xr.DataArray
-            The data variable to validate weights for.
-        weights : xr.DataArray
-            The weights based on a frequency of time.
-        datetime_component : DateTimeComponent
-            The frequency of time to group by in xarray datetime component notation.
+            The data variable.
         """
-        frequency_groups = len(self._groupby_multiindex(data_var, freq).count())
-        expected_sum = np.ones(frequency_groups)
-        actual_sum = self._groupby_multiindex(weights, freq).sum().values
+        time_dim_key = data_var.cf["T"].name
+        datetime_components = TimeAverageAccessor.FREQS_TO_MULTIINDEX[self.operation][
+            self.freq
+        ]
 
-        np.testing.assert_allclose(actual_sum, expected_sum)
+        df = pd.DataFrame()
+        for index, component in enumerate(datetime_components):
+            df[index] = data_var[f"{time_dim_key}.{component}"].data
+
+        # For continuous DJF seasons, shift Decembers over to the next year so
+        # that grouping on the MultiIndex produces the correct results.
+        if self.freq == "season" and self.djf_type == "cont":
+            df = self._shift_djf_decembers(df)
+
+        self.time_multiindex = pd.MultiIndex.from_frame(df)
+        self.time_multiindex_name = "_".join(datetime_components)
+
+    def _shift_djf_decembers(self, df_time: pd.DataFrame) -> pd.DataFrame:
+        """Shifts Decembers over to the next year for continuous DJF seasons.
+
+        Xarray defines the DJF season with the same year December, resulting in
+        discontinuous DJF seasons. If the intent is to have continuous DJF
+        seasons, the Decembers should be from the previous years.
+
+        Parameters
+        ----------
+        df_time : pd.DataFrame
+            The DataFrame generated from the time coordinates, with each column
+            storing the xarray DateTime component values.
+
+        Returns
+        -------
+        pd.DataFrame
+            The DataFrame with Decembers shifted over year.
+        """
+        df_time.loc[df_time["month"] == 12, "year"] = df_time["year"] + 1
+
+        if self.operation == "timeseries_avg":
+            df_time = df_time.drop("year")
+        elif self.operation in ["climatology", "departure"]:
+            df_time = df_time.drop(["year", "month"])
+
+        return df_time
 
     def _mask_incomplete_djf(self, data_var: xr.DataArray) -> xr.DataArray:
         """
@@ -234,9 +268,72 @@ class DatasetTimeAverageAccessor:
 
         return data_var
 
-    def _groupby_multiindex(
-        self, data_var: xr.DataArray, freq: Frequency
-    ) -> xr.DataArray:
+    def calculate_weights(self, data_var: xr.DataArray) -> xr.DataArray:
+        """Calculates weights for a Dataset based on a frequency of time.
+
+        Time bounds, leap years and number of days for each month are considered
+        during grouping. If the sum of the weights do not equal 1.0, an error
+        will be raised.
+
+        Parameters
+        ----------
+        ds : xr.Dataset
+            The dataset used for calculating the lengths of months with bounds.
+
+        Returns
+        -------
+        xr.DataArray
+            The weights based on a frequency of time.
+        """
+        months_lengths = self._get_months_lengths()
+        months_lengths_grouped = self._groupby_multiindex(months_lengths)
+
+        weights: xr.DataArray = months_lengths_grouped / months_lengths_grouped.sum()
+        self._validate_weights(data_var, weights)
+        return weights
+
+    def _get_months_lengths(self) -> xr.DataArray:
+        """Get lengths of months based on the time coordinates of a dataset.
+
+        If time bounds exist, it will be used to generate the length of months.
+        This allows for a robust calculation of weights because different
+        datasets could record their time differently (e.g., at the beginning,
+        middle, or end of each time interval).
+
+        Parameters
+        ----------
+        ds : xr.Dataset
+            The dataset to get months' lengths from.
+
+        Returns
+        -------
+        xr.DataArray
+            The months' lengths for the dataset.
+        """
+        time_bounds = self._dataset.bounds.get_bounds("time")
+        months_lengths = (time_bounds[:, 1] - time_bounds[:, 0]).dt.days
+        return months_lengths
+
+    def _validate_weights(self, data_var: xr.DataArray, weights: xr.DataArray):
+        """Validate that the sum of the weights for a dataset equals 1.0.
+
+        It generates the number of frequency groups after grouping by a
+        frequency. For example, if weights are being generated on a monthly
+        basis, there are 12 group with each group representing a month in the
+        year.
+
+        Parameters
+        ----------
+        data_var : xr.DataArray
+            The data variable to validate weights for.
+        """
+        frequency_groups = len(self._groupby_multiindex(data_var).count())
+        expected_sum = np.ones(frequency_groups)
+        actual_sum = self._groupby_multiindex(weights).sum().values
+
+        np.testing.assert_allclose(actual_sum, expected_sum)
+
+    def _groupby_multiindex(self, data_var: xr.DataArray) -> xr.DataArray:
         """Groups a data variable by a pandas multiindex representing time.
 
         For example, if you are performing a daily climatology cycle calculation,
@@ -253,36 +350,18 @@ class DatasetTimeAverageAccessor:
         ----------
         data_var : xr.DataArray
             The data variable to perform grouping on.
-        freq : Frequency
-            The frequency to group on.
 
         Returns
         -------
         xr.DataArray
             The data variable grouped by the frequency.
         """
-        data = []
-        time_dim_key = data_var.cf["T"].name
-        datetime_components = DatasetClimatologyAccessor.FREQS_TO_DATETIME[freq]
-
-        for component in datetime_components:
-            data.append(data_var[f"{time_dim_key}.{component}"].data)
-
-        freq_index = pd.MultiIndex.from_arrays(data)
-        coord_name = "_".join(datetime_components)
-        data_var.coords[coord_name] = ("time", freq_index)
-        data_var = data_var.groupby(coord_name)
+        data_var.coords[self.time_multiindex_name] = ("time", self.time_multiindex)
+        data_var = data_var.groupby(self.time_multiindex_name)
 
         return data_var
 
-    def _add_operation_attrs(
-        self,
-        data_var: xr.DataArray,
-        operation_type: Literal["climatology", "departure", "timeseries_avg"],
-        frequency: Frequency,
-        is_weighted: bool,
-        djf_type: Optional[DJFType],
-    ) -> xr.DataArray:
+    def _add_operation_attrs(self, data_var: xr.DataArray) -> xr.DataArray:
         """Adds operation attributes to the data var.
 
         These attributes should help users distinguish a data variable that
@@ -292,15 +371,6 @@ class DatasetTimeAverageAccessor:
         ----------
         data_var : xr.DataArray
             The data variable.
-        operation_type : Literal["climatology", "departure", "timeseries_avg"],
-            The calculation type.
-        frequency : Frequency
-            The frequency of time.
-        is_weighted : bool
-            Whether to calculation was weighted or not.
-        djf_type : Optional[DJFType]
-            Whether the DJF season is continuous ("cont", previous year Dec) or
-            discontinuous ("discont", same year Dec), by default ``"cont"``.
 
         Returns
         -------
@@ -311,38 +381,33 @@ class DatasetTimeAverageAccessor:
         --------
         Access attribute for info on climatology operation:
 
-        >>> ts_climo_monthly.operation
-        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
-        >>> ts_climo_monthly.attrs["operation"]
-        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+        >>> ds_climo_seasonal.ts.operation
+        {'type': 'climatology', 'freq': 'month', 'is_weighted': True
+         'time_multiindex_name': 'season'
+        }
+        >>> ds_ts_seasonal.ts.attrs["operation"]
+        {'type': 'timeseries_avg', 'freq': 'season', 'is_weighted': True
+         'time_multiindex_name':  'year_season'
+        }
         """
         data_var.attrs.update(
             {
                 "operation": {
-                    "type": operation_type,
-                    "frequency": frequency,
-                    "is_weighted": str(is_weighted),
+                    "type": self.operation,
+                    "freq": self.freq,
+                    "is_weighted": str(self.is_weighted),
+                    "time_multiindex_name": self.time_multiindex_name,
                 },
             }
         )
 
-        if frequency == "season":
-            data_var.attrs["operation"].update({"djf_type": djf_type})
+        if self.freq == "season":
+            data_var.attrs["operation"].update({"djf_type": self.djf_type})
         return data_var
 
 
 @xr.register_dataset_accessor("climo")
-class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
-    # Maps available frequencies to xarray DateTime components for xarray operations.
-    # This is simple groupby
-    # TODO: Add support for custom seasons freq
-    # TODO: Add support for diurnalNNN freq
-    FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
-        "day": ("month", "day"),
-        "season": ("season",),
-        "month": ("month",),
-    }
-
+class ClimatologyAccessor(TimeAverageAccessor):
     def __init__(self, dataset: xr.Dataset):
         self._dataset: xr.Dataset = dataset
 
@@ -378,9 +443,10 @@ class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
         is_weighted : bool, optional
             Perform grouping using weighted averages, by default True.
             Time bounds, leap years, and month lengths are considered.
-        djf_type : DJFType, optional
-            Whether the DJF season is continuous ("cont", previous year Dec) or
-            discontinuous ("discont", same year Dec), by default ``"cont"``.
+        djf_type : DJFType
+            Whether the DJF season is "cont" (continuous with previous year
+            December) or "discont" (discontinuous with same year Dec), by
+            default ``"cont"``.
 
             - ``cont"`` for a continuous DJF (previous year Dec)
             - ``"discont"`` for a discontinuous DJF (same year Dec)
@@ -457,15 +523,13 @@ class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
         {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
         """
         # TODO: Add support for climatology year chunking
-        self._validate_inputs(freq, djf_type)
+        self._validate_and_set_attrs("climatology", freq, is_weighted, djf_type)
         ds_climo = self._dataset.copy()
         da_data_var = get_data_var(ds_climo, data_var)
 
         # Calculate data variable climatology and preserve the original variable
         # for calculating departure.
-        ds_climo[data_var] = self._group_data(
-            da_data_var.copy(), "climatology", freq, is_weighted, djf_type
-        )
+        ds_climo[data_var] = self._group_data(da_data_var.copy())
         ds_climo[f"{data_var}_original"] = da_data_var
         return ds_climo
 
@@ -512,7 +576,8 @@ class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
         >>> ts_month_climo.attrs["operation"]
         {'type': 'departure', 'frequency': 'month', 'is_weighted': True}
         """
-        # Use the climatology data variable to extract the climatology info.
+        # The climatology operation parameters are extracted and used for
+        # the departure operation.
         da_data_var = get_data_var(self._dataset, data_var)
         climo_info = da_data_var.attrs.get("operation")
         if climo_info is None:
@@ -522,16 +587,15 @@ class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
                 f"Make sure to run the `ds.climo.cycle()` on '{da_data_var.name}' first "
                 "before calculating its departure."
             )
-
-        # Group the variable using the climatology information.
-        data_var_og = self._dataset[f"{da_data_var.name}_original"]
-        data_var_grouped = self._group_data(
-            data_var_og,
+        self._validate_and_set_attrs(
             "departure",
             climo_info["frequency"],
             climo_info["is_weighted"],
-            climo_info.get("djf_type"),
-        ).rename("ts")
+            climo_info.get("djf_type", "cont"),
+        )
+
+        data_var_og = self._dataset[f"{da_data_var.name}_original"]
+        data_var_grouped = self._group_data(data_var_og).rename("ts")
 
         # Calculate departure by subtracting the grouped data var with the
         # climatology data var.
@@ -542,18 +606,8 @@ class DatasetClimatologyAccessor(DatasetTimeAverageAccessor):
 
 
 @xr.register_dataset_accessor("timeseries")
-class DatasetTimeseriesAverageAccessor(DatasetTimeAverageAccessor):
-    # Maps available frequencies to xarray DateTime components for xarray operations.
-    # This is simple groupby
-    # TODO: Add support for custom seasons
-    # TODO: Add support for Nhour
-    FREQS_TO_DATETIME: Dict[str, Tuple[DateTimeComponent, ...]] = {
-        "hour": ("year", "month", "day", "hour"),
-        "day": ("year", "month", "day"),
-        "season": ("year", "season"),
-        "month": ("year", "month"),
-        "year": ("year",),
-    }
+class TimeseriesAverageAccessor(TimeAverageAccessor):
+    """Class to represent TimeSeriesAverageAccessor"""
 
     def __init__(self, dataset: xr.Dataset):
         self._dataset: xr.Dataset = dataset
@@ -564,13 +618,112 @@ class DatasetTimeseriesAverageAccessor(DatasetTimeAverageAccessor):
         data_var: Optional[str] = None,
         is_weighted: bool = True,
         djf_type: DJFType = "cont",
-    ):
-        self._validate_inputs(freq, djf_type)
+    ) -> xr.Dataset:
+        """Calculates the timeseries average for a data variable.
+
+        Parameters
+        ----------
+        freq : Frequency
+            The frequency of time to group by. Available aliases:
+            - ``"day"`` for daily cycle climatology.
+            - ``"season"` for seasonal cycle climatology.
+            - ``"month"`` for annual cycle climatology.
+            - ``"JAN", "FEB", ..., or "DEC"`` for specific monthly climatology.
+            - Averages the month across all seasons.
+            - ``"DJF", "MAM", "JJA", or "SON"`` for specific season climatology.
+            - Average the season across all years.
+
+            Refer to ``FREQUENCIES`` for a complete list of available options.
+        data_var: Optional[str], optional
+            The key of the data variable in the dataset to calculate climatology
+            on. If None, an inference to the desired data variable is attempted
+            with the Dataset's "xcdat_infer" attr, by default None.
+        is_weighted : bool, optional
+            Perform grouping using weighted averages, by default True.
+            Time bounds, leap years, and month lengths are considered.
+        djf_type : DJFType
+            Whether the DJF season is "cont" (continuous with previous year
+            December) or "discont" (discontinuous with same year Dec), by
+            default ``"cont"``.
+
+            - ``cont"`` for a continuous DJF (previous year Dec)
+            - ``"discont"`` for a discontinuous DJF (same year Dec)
+
+            Seasonally continuous December (``"cont"``) refers to continuity
+            between December and January. DJF starts on the first year Dec and
+            second year Jan/Feb, and ending on the second to last year Dec and
+            last year Jan + Feb). Incomplete seasons are dropped, which includes
+            the start year Jan/ Feb and end year Dec
+
+            - Example Date Range: Jan/2015 - Dec/2017
+            - Dropped incomplete seasons -> Jan/2015, Feb/2015, and Dec/2017
+
+            - Start -> Dec/2015, Jan/2016, Feb/2016
+            - End -> Dec/2016, Jan/2017, Feb/2017
+
+            Seasonally discontinuous December (``"discont"``) refers to
+            discontinuity between Feb and Dec. DJF starts on the first year
+            Jan/Feb/Dec, and ending on the last year Jan/Feb/Dec. This is the
+            default xarray behavior when grouping by season.
+
+            - Example Date Range: Jan/2015 - Dec/2017
+
+            - Start -> Jan/2015, Feb/2015, Dec/2015
+            - End -> Jan/2017, Feb/2017, Dec/2017
+
+        Returns
+        -------
+        xr.Dataset
+            Dataset containing the climatology cycle for a variable.
+
+        Raises
+        ------
+        ValueError
+            If incorrect ``frequency`` argument is passed.
+        KeyError
+            If the dataset does not have "time" axis.
+
+        Examples
+        --------
+        Import:
+
+        >>> import xarray as xr
+        >>> from xcdat.climatology import climatology, departure
+        >>> ds = xr.open_dataset("file_path")
+
+        Get daily, seasonal, or annual weighted climatology for a variable:
+
+        >>> ds_ts_daily = ds.timeseries.avg("day", data_var="ts")
+        >>> ds_ts_daily.ts
+        >>>
+        >>> ds_ts_seasonal = ds.timeseries.avg("season", data_var="ts")
+        >>> ds_ts_seasonal.ts
+        >>>
+        >>> ds_ts_annual = ds.timeseries.avg("year", data_var="ts")
+        >>> ds_ts_annual.ts
+
+        Get monthly, seasonal, or month unweighted climatology for a variable:
+        >>> ds_ts_daily = ds.timeseries.avg("day", data_var="ts", is_weighted=False)
+        >>> ds_ts_daily.ts
+        >>>
+        >>> ds_ts_seasonal = ds.timeseries.avg("season", data_var="ts", is_weighted=False)
+        >>> ds_ts_seasonal.ts
+        >>>
+        >>> ds_ts_annual = ds.timeseries.avg("year", data_var="ts", is_weighted=False)
+        >>> ds_ts_annual.ts
+
+
+        Access Dataset attribute for climatology operation info:
+
+        >>> ds_ts_monthly.ts.operation
+        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+        >>> ds_ts_monthly.ts.attrs["operation"]
+        {'type': 'climatology', 'frequency': 'month', 'is_weighted': True}
+        """
+        self._validate_and_set_attrs("timeseries_avg", freq, is_weighted, djf_type)
 
         ds = self._dataset.copy()
         da_data_var = get_data_var(ds, data_var)
 
-        ds[data_var] = self._group_data(
-            da_data_var.copy(), "timeseries_avg", freq, is_weighted, djf_type
-        )
+        ds[data_var] = self._group_data(da_data_var.copy())
         return ds

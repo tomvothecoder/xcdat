@@ -6,7 +6,7 @@ import pytest
 import xarray as xr
 
 from tests.fixtures import generate_dataset
-from xcdat.time_avg import DatasetClimatologyAccessor
+from xcdat.time_avg import ClimatologyAccessor
 
 
 class TestDatasetClimatologyAccessor:
@@ -15,7 +15,7 @@ class TestDatasetClimatologyAccessor:
         self.ds: xr.Dataset = generate_dataset(cf_compliant=True, has_bounds=True)
 
     def test__init__(self):
-        obj = DatasetClimatologyAccessor(self.ds)
+        obj = ClimatologyAccessor(self.ds)
 
         assert obj._dataset.identical(self.ds)
 
