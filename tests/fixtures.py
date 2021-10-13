@@ -96,6 +96,55 @@ time_bnds_non_cf = xr.DataArray(
     attrs={"is_generated": "True"},
 )
 
+time_cf_hourly = xr.DataArray(
+    data=[
+        datetime(2000, 1, 1, 12),
+        datetime(2000, 2, 1, 6),
+        datetime(2000, 3, 1, 12),
+        datetime(2000, 4, 1, 6),
+        datetime(2000, 5, 1, 12),
+        datetime(2000, 6, 1, 6),
+        datetime(2000, 7, 1, 12),
+        datetime(2000, 8, 1, 6),
+        datetime(2000, 9, 1, 12),
+        datetime(2000, 10, 1, 6),
+        datetime(2000, 11, 1, 12),
+        datetime(2000, 12, 1, 6),
+        datetime(2001, 1, 1, 12),
+        datetime(2001, 2, 1, 6),
+    ],
+    dims=["time"],
+    attrs={
+        "long_name": "time",
+        "standard_name": "time",
+        "axis": "T",
+    },
+)
+time_bnds_hourly = xr.DataArray(
+    name="time_bnds",
+    data=[
+        [datetime(1999, 12, 17, 3), datetime(2000, 1, 16, 21)],
+        [datetime(2000, 1, 16, 21), datetime(2000, 2, 15, 21)],
+        [datetime(2000, 2, 15, 21), datetime(2000, 3, 16, 21)],
+        [datetime(2000, 3, 16, 21), datetime(2000, 4, 16, 9)],
+        [datetime(2000, 4, 16, 9), datetime(2000, 5, 16, 21)],
+        [datetime(2000, 5, 16, 21), datetime(2000, 6, 16, 9)],
+        [datetime(2000, 6, 16, 9), datetime(2000, 7, 16, 21)],
+        [datetime(2000, 7, 16, 21), datetime(2000, 8, 16, 21)],
+        [datetime(2000, 8, 16, 21), datetime(2000, 9, 16, 9)],
+        [datetime(2000, 9, 16, 9), datetime(2000, 10, 16, 21)],
+        [datetime(2000, 10, 16, 21), datetime(2000, 11, 16, 9)],
+        [datetime(2000, 11, 16, 9), datetime(2000, 12, 16, 21)],
+        [datetime(2000, 12, 16, 21), datetime(2001, 1, 16, 21)],
+        [datetime(2001, 1, 16, 21), datetime(2001, 2, 16, 15)],
+    ],
+    coords={"time": time_cf_hourly},
+    dims=["time", "bnds"],
+    attrs={
+        "is_generated": "True",
+    },
+)
+
 # LATITUDE
 # ========
 lat = xr.DataArray(

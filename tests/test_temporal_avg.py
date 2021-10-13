@@ -5,11 +5,21 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from tests.fixtures import generate_dataset
-from xcdat.time_avg import ClimatologyAccessor
+from tests.fixtures import generate_dataset, time_bnds_hourly, time_cf_hourly
+from xcdat.temporal_avg import (
+    ClimatologyAccessor,
+    TemporalAverageAccessor,
+    TimeseriesAverageAccessor,
+)
 
 
-class TestTimeAverageAccessor:
+class TestTemporalAverageAccessor:
+    def test__init__(self):
+        ds: xr.Dataset = generate_dataset(cf_compliant=True, has_bounds=True)
+
+        obj = TemporalAverageAccessor(ds)
+        assert obj._dataset.identical(ds)
+
     class TestGroupData:
         @pytest.fixture(autouse=True)
         def setup(self):
@@ -25,6 +35,7 @@ class TestTimeAverageAccessor:
             ts_result = ds.climo._group_data(ds["ts"])
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "day"
+            assert ts_result.attrs["operation"]["groupby"] == "month_day"
             assert ts_result.attrs["operation"]["is_weighted"] == "True"
 
             ts_expected = np.ones((12, 4, 4))
@@ -39,6 +50,7 @@ class TestTimeAverageAccessor:
             ts_result = ds.climo._group_data(ds["ts"])
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "day"
+            assert ts_result.attrs["operation"]["groupby"] == "month_day"
             assert ts_result.attrs["operation"]["is_weighted"] == "False"
 
             ts_expected = np.ones((12, 4, 4))
@@ -56,6 +68,7 @@ class TestTimeAverageAccessor:
             )
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "month"
+            assert ts_result.attrs["operation"]["groupby"] == "month"
             assert ts_result.attrs["operation"]["is_weighted"] == "True"
 
             ts_expected = np.ones((12, 4, 4))
@@ -70,6 +83,7 @@ class TestTimeAverageAccessor:
             ts_result = ds.climo._group_data(ds["ts"])
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "month"
+            assert ts_result.attrs["operation"]["groupby"] == "month"
             assert ts_result.attrs["operation"]["is_weighted"] == "False"
 
             ts_expected = np.ones((12, 4, 4))
@@ -88,6 +102,7 @@ class TestTimeAverageAccessor:
             )
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "season"
+            assert ts_result.attrs["operation"]["groupby"] == "season"
             assert ts_result.attrs["operation"]["is_weighted"] == "True"
             assert ts_result.attrs["operation"]["djf_type"] == "cont"
 
@@ -126,6 +141,7 @@ class TestTimeAverageAccessor:
             ts_result = ds.climo._group_data(ds["ts"])
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "season"
+            assert ts_result.attrs["operation"]["groupby"] == "season"
             assert ts_result.attrs["operation"]["is_weighted"] == "True"
             assert ts_result.attrs["operation"]["djf_type"] == "discont"
 
@@ -142,6 +158,7 @@ class TestTimeAverageAccessor:
             ts_result = ds.climo._group_data(ds["ts"])
             assert ts_result.attrs["operation"]["type"] == "climatology"
             assert ts_result.attrs["operation"]["freq"] == "season"
+            assert ts_result.attrs["operation"]["groupby"] == "season"
             assert ts_result.attrs["operation"]["is_weighted"] == "False"
             assert ts_result.attrs["operation"]["djf_type"] == "discont"
 
@@ -403,8 +420,8 @@ class TestTimeAverageAccessor:
                     "operation": {
                         "type": ds.climo.operation,
                         "freq": ds.climo.freq,
+                        "groupby": "year_season",
                         "is_weighted": ds.climo.is_weighted,
-                        "time_multiindex_name": "year_season",
                         "djf_type": ds.climo.djf_type,
                     }
                 }
@@ -474,8 +491,8 @@ class TestClimatologyAccessor:
                     "operation": {
                         "type": "climatology",
                         "freq": "month",
+                        "groupby": "month",
                         "is_weighted": "True",
-                        "time_multiindex_name": "month",
                     }
                 },
             )
@@ -503,7 +520,7 @@ class TestClimatologyAccessor:
                         "type": "climatology",
                         "freq": "month",
                         "is_weighted": "True",
-                        "time_multiindex_name": "month",
+                        "groupby": "month",
                     }
                 },
             )
@@ -530,8 +547,8 @@ class TestClimatologyAccessor:
                     "operation": {
                         "type": "climatology",
                         "freq": "month",
+                        "groupby": "month",
                         "is_weighted": "False",
-                        "time_multiindex_name": "month",
                     }
                 },
             )
@@ -592,7 +609,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "True",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "cont",
                     },
                 },
@@ -625,7 +642,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "True",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "cont",
                     },
                 },
@@ -649,7 +666,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "True",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "cont",
                     },
                 },
@@ -682,7 +699,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "False",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "cont",
                     },
                 },
@@ -706,7 +723,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "False",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "cont",
                     },
                 },
@@ -739,7 +756,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "False",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "discont",
                     },
                 },
@@ -763,7 +780,7 @@ class TestClimatologyAccessor:
                         "type": "departure",
                         "freq": "season",
                         "is_weighted": "False",
-                        "time_multiindex_name": "season",
+                        "groupby": "season",
                         "djf_type": "discont",
                     },
                 },
@@ -772,30 +789,253 @@ class TestClimatologyAccessor:
             assert result.identical(expected)
 
 
-class TestTimeseriesAverageAccessor:
+class TestTimeSeriesAverageAccessor:
     @pytest.fixture(autouse=True)
     def setup(self):
-        pass
+        self.ds: xr.Dataset = generate_dataset(cf_compliant=True, has_bounds=True)
 
-    @pytest.mark.xfail
+    def test__init__(self):
+        ds: xr.Dataset = generate_dataset(cf_compliant=True, has_bounds=True)
+
+        obj = TimeseriesAverageAccessor(ds)
+        assert obj._dataset.identical(ds)
+
+    def test_decorator_call(self):
+        ds: xr.Dataset = generate_dataset(cf_compliant=True, has_bounds=True)
+
+        obj = ds.timeseries
+        assert obj._dataset.identical(ds)
+
     def test_annual_timeseries_avg(self):
-        assert 0
+        ds = self.ds.copy()
 
-    @pytest.mark.xfail
-    def test_seasonal_timeseries_avg(self):
-        assert 0
+        result_ds = ds.timeseries.avg("year", data_var="ts")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((2, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year": pd.MultiIndex.from_tuples(
+                    [(2000,), (2001,)],
+                ),
+            },
+            dims=["year", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "year",
+                    "groupby": "year",
+                    "is_weighted": "True",
+                }
+            },
+        )
 
-    @pytest.mark.xfail
+        assert result_ds.identical(expected_ds)
+
+    def test_continuous_seasonal_timeseries_avg(self):
+        ds = self.ds.copy()
+
+        result_ds = ds.timeseries.avg("season", data_var="ts")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((5, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year_season": pd.MultiIndex.from_tuples(
+                    [
+                        (2000, "DJF"),
+                        (2000, "MAM"),
+                        (2000, "JJA"),
+                        (2000, "SON"),
+                        (2001, "DJF"),
+                    ],
+                ),
+            },
+            dims=["year_season", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "season",
+                    "is_weighted": "True",
+                    "groupby": "year_season",
+                    "djf_type": "cont",
+                }
+            },
+        )
+        expected_ds.ts.data[0] = np.zeros((4, 4))
+
+        assert result_ds.identical(expected_ds)
+
+    def test_discontinuous_seasonal_timeseries_avg(self):
+        ds = self.ds.copy()
+
+        result_ds = ds.timeseries.avg("season", data_var="ts", djf_type="discont")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((5, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year_season": pd.MultiIndex.from_tuples(
+                    [
+                        (2000, "DJF"),
+                        (2000, "MAM"),
+                        (2000, "JJA"),
+                        (2000, "SON"),
+                        (2001, "DJF"),
+                    ],
+                ),
+            },
+            dims=["year_season", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "season",
+                    "groupby": "year_season",
+                    "is_weighted": "True",
+                    "djf_type": "discont",
+                }
+            },
+        )
+
+        assert result_ds.identical(expected_ds)
+
     def test_monthly_timeseries_avg(self):
-        assert 0
+        ds = self.ds.copy()
 
-    @pytest.mark.xfail
+        result_ds = ds.timeseries.avg("month", data_var="ts")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((14, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year_month": pd.MultiIndex.from_tuples(
+                    [
+                        (2000, 1),
+                        (2000, 2),
+                        (2000, 3),
+                        (2000, 4),
+                        (2000, 5),
+                        (2000, 6),
+                        (2000, 7),
+                        (2000, 8),
+                        (2000, 9),
+                        (2000, 10),
+                        (2000, 11),
+                        (2000, 12),
+                        (2001, 1),
+                        (2001, 2),
+                    ],
+                ),
+            },
+            dims=["year_month", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "month",
+                    "groupby": "year_month",
+                    "is_weighted": "True",
+                }
+            },
+        )
+
+        assert result_ds.identical(expected_ds)
+
     def test_daily_timeseries_avg(self):
-        assert 0
+        ds = self.ds.copy()
 
-    @pytest.mark.xfail
+        result_ds = ds.timeseries.avg("day", data_var="ts")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((14, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year_month_day": pd.MultiIndex.from_tuples(
+                    [
+                        (2000, 1, 1),
+                        (2000, 2, 1),
+                        (2000, 3, 1),
+                        (2000, 4, 1),
+                        (2000, 5, 1),
+                        (2000, 6, 1),
+                        (2000, 7, 1),
+                        (2000, 8, 1),
+                        (2000, 9, 1),
+                        (2000, 10, 1),
+                        (2000, 11, 1),
+                        (2000, 12, 1),
+                        (2001, 1, 1),
+                        (2001, 2, 1),
+                    ],
+                ),
+            },
+            dims=["year_month_day", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "day",
+                    "groupby": "year_month_day",
+                    "is_weighted": "True",
+                }
+            },
+        )
+
+        assert result_ds.identical(expected_ds)
+
     def test_hourly_timeseries_avg(self):
-        assert 0
+        ds = self.ds.copy()
+        ds.coords["time"] = time_cf_hourly
+        ds["time_bnds"] = time_bnds_hourly
+        ds.coords["time"].attrs["bounds"] = "time_bnds"
+
+        result_ds = ds.timeseries.avg("hour", data_var="ts")
+        expected_ds = ds.copy()
+        expected_ds["ts"] = xr.DataArray(
+            name="ts",
+            data=np.ones((14, 4, 4)),
+            coords={
+                "lat": self.ds.lat,
+                "lon": self.ds.lon,
+                "year_month_day_hour": pd.MultiIndex.from_tuples(
+                    [
+                        (2000, 1, 1, 12),
+                        (2000, 2, 1, 6),
+                        (2000, 3, 1, 12),
+                        (2000, 4, 1, 6),
+                        (2000, 5, 1, 12),
+                        (2000, 6, 1, 6),
+                        (2000, 7, 1, 12),
+                        (2000, 8, 1, 6),
+                        (2000, 9, 1, 12),
+                        (2000, 10, 1, 6),
+                        (2000, 11, 1, 12),
+                        (2000, 12, 1, 6),
+                        (2001, 1, 1, 12),
+                        (2001, 2, 1, 6),
+                    ]
+                ),
+            },
+            dims=["year_month_day_hour", "lat", "lon"],
+            attrs={
+                "operation": {
+                    "type": "timeseries_avg",
+                    "freq": "hour",
+                    "groupby": "year_month_day_hour",
+                    "is_weighted": "True",
+                }
+            },
+        )
+
+        assert result_ds.identical(expected_ds)
 
     @pytest.mark.xfail
     def test_custom_hourly_timeseries_avg(self):

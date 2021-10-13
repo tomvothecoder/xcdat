@@ -1,4 +1,4 @@
-"""Functions related to calculating climatology cycles and departures."""
+"""Module containing temporal averaging (time series, climatology) functions."""
 
 from typing import Optional, Union
 
@@ -38,39 +38,41 @@ DJFType = Literal["cont", "discont"]
 DJF_TYPES = get_args(DJFType)
 
 
-class TimeAverageAccessor:
+class TemporalAverageAccessor:
     # Maps frequencies to xarray DateTime components, which are used to create
     # a Pandas MultiIndex for time grouping operations.
     # Source: https://xarray.pydata.org/en/stable/user-guide/time-series.html#datetime-components
-    FREQS_TO_MULTIINDEX = {
+    FREQ_GROUPBY_MAP = {
         # TODO: Add support for custom seasons freq
         # TODO: Add support for diurnalNNN freq
         "climatology": {
-            "day": ("month", "day"),
-            # "year and "month" must be included to properly mask incomplete
-            # seasons and shift over Decembers by year (for continuous DJF).
-            # Both index levels is removed from the MultiIndex before grouping
-            # on it. Refer to `_drop_season_multiindex_levels()`.
+            # For "season" frequency, "year and "month" must be included to
+            # properly mask incomplete seasons and shift over Decembers by year
+            # (for continuous DJF).
+            # Both index levels are removed from the MultiIndex before grouping
+            # by it. Refer to `_drop_season_multiindex_levels()`.
             "season": ("year", "season", "month"),
             "month": ("month",),
+            "day": ("month", "day"),
         },
         "departure": {
-            "day": ("month", "day"),
             "season": ("year", "season", "month"),
             "month": ("month",),
+            "day": ("month", "day"),
         },
         # TODO: Add support for custom seasons
         # TODO: Add support for Nhour
         "timeseries_avg": {
-            "hour": ("year", "month", "day", "hour"),
-            "day": ("year", "month", "day"),
-            # "month" must be included to properly mask incomplete seasons and
-            # shift over Decembers by year (for continuous DJF). The "month"
-            # index level is removed from the MultiIndex before grouping on it.
-            # Refer to `_drop_season_multiindex_levels()`.
+            "year": ("year",),
+            # For the "seasona" freq, "month" must be included to properly mask
+            # incomplete seasons and shift over Decembers by year
+            # (for continuous DJF).
+            # The "month" index level is removed from the MultiIndex before
+            # grouping by it. Refer to `_drop_season_multiindex_levels()`.
             "season": ("year", "season", "month"),
             "month": ("year", "month"),
-            "year": ("year",),
+            "day": ("year", "month", "day"),
+            "hour": ("year", "month", "day", "hour"),
         },
     }
 
@@ -173,9 +175,9 @@ class TimeAverageAccessor:
         if self.is_weighted:
             weights = self.calculate_weights(data_var)
             data_var *= weights
-            data_var = self._groupby_multiindex(data_var).sum()
+            data_var = self._time_multiindex_name(data_var).sum()
         else:
-            data_var = self._groupby_multiindex(data_var).mean()
+            data_var = self._time_multiindex_name(data_var).mean()
 
         data_var = self._add_operation_attrs(data_var)
         return data_var
@@ -191,7 +193,7 @@ class TimeAverageAccessor:
             The data variable.
         """
         time_dim_key = data_var.cf["T"].name
-        datetime_components = TimeAverageAccessor.FREQS_TO_MULTIINDEX[self.operation][
+        datetime_components = TemporalAverageAccessor.FREQ_GROUPBY_MAP[self.operation][
             self.freq
         ]
 
@@ -205,7 +207,7 @@ class TimeAverageAccessor:
         if self.freq == "season":
             if self.djf_type == "cont":
                 df = self._shift_decembers(df)
-            df = self._drop_season_df_cols(df)
+            df = self._drop_multiindex_levels(df)
         self.df = df
 
         # `pd.MultiIndex.from_frame()` generates the `names` of the MultiIndex
@@ -243,7 +245,7 @@ class TimeAverageAccessor:
         df_time.loc[df_time["month"] == 12, "year"] = df_time["year"] + 1
         return df_time
 
-    def _drop_season_df_cols(self, df_time: pd.DataFrame) -> pd.DataFrame:
+    def _drop_multiindex_levels(self, df_time: pd.DataFrame) -> pd.DataFrame:
         """Drops columns from the season DataFrame based on the operation.
 
         Specific columns are dropped because they are no longer necessary for
@@ -261,7 +263,7 @@ class TimeAverageAccessor:
             The DataFrame with droppped levels.
         """
         if self.operation == "timeseries_avg":
-            df_time = df_time.drop("year", axis=1)
+            df_time = df_time.drop("month", axis=1)
         elif self.operation in ["climatology", "departure"]:
             df_time = df_time.drop(["year", "month"], axis=1)
         return df_time
@@ -318,7 +320,7 @@ class TimeAverageAccessor:
             The weights based on a frequency of time.
         """
         months_lengths = self._get_months_lengths()
-        months_lengths_grouped = self._groupby_multiindex(months_lengths)
+        months_lengths_grouped = self._time_multiindex_name(months_lengths)
 
         weights: xr.DataArray = months_lengths_grouped / months_lengths_grouped.sum()
         self._validate_weights(data_var, weights)
@@ -359,13 +361,13 @@ class TimeAverageAccessor:
         data_var : xr.DataArray
             The data variable to validate weights for.
         """
-        frequency_groups = len(self._groupby_multiindex(data_var).count())
+        frequency_groups = len(self._time_multiindex_name(data_var).count())
         expected_sum = np.ones(frequency_groups)
-        actual_sum = self._groupby_multiindex(weights).sum().values
+        actual_sum = self._time_multiindex_name(weights).sum().values
 
         np.testing.assert_allclose(actual_sum, expected_sum)
 
-    def _groupby_multiindex(self, data_var: xr.DataArray) -> xr.DataArray:
+    def _time_multiindex_name(self, data_var: xr.DataArray) -> xr.DataArray:
         """Groups a data variable by a Pandas MultiIndex for time coordinates.
 
         For example, if you are performing a daily climatology cycle
@@ -418,11 +420,11 @@ class TimeAverageAccessor:
 
         >>> ds_climo_seasonal.ts.operation
         {'type': 'climatology', 'freq': 'month', 'is_weighted': True
-         'time_multiindex_name': 'season'
+         'groupby': 'season'
         }
         >>> ds_ts_seasonal.ts.attrs["operation"]
         {'type': 'timeseries_avg', 'freq': 'season', 'is_weighted': True
-         'time_multiindex_name':  'year_season'
+         'groupby':  'year_season'
         }
         """
         data_var.attrs.update(
@@ -430,8 +432,8 @@ class TimeAverageAccessor:
                 "operation": {
                     "type": self.operation,
                     "freq": self.freq,
+                    "groupby": self.time_multiindex_name,
                     "is_weighted": str(self.is_weighted),
-                    "time_multiindex_name": self.time_multiindex_name,
                 },
             }
         )
@@ -442,7 +444,7 @@ class TimeAverageAccessor:
 
 
 @xr.register_dataset_accessor("climo")
-class ClimatologyAccessor(TimeAverageAccessor):
+class ClimatologyAccessor(TemporalAverageAccessor):
     def __init__(self, dataset: xr.Dataset):
         super(ClimatologyAccessor, self).__init__(dataset)
 
@@ -641,7 +643,7 @@ class ClimatologyAccessor(TimeAverageAccessor):
 
 
 @xr.register_dataset_accessor("timeseries")
-class TimeseriesAverageAccessor(TimeAverageAccessor):
+class TimeseriesAverageAccessor(TemporalAverageAccessor):
     """Class to represent TimeSeriesAverageAccessor"""
 
     def __init__(self, dataset: xr.Dataset):

@@ -1,4 +1,4 @@
-"""Averager module that contains functions related to geospatial averaging."""
+"""Module containing geospatial averaging functions."""
 from functools import reduce
 from typing import Dict, Hashable, List, Optional, Tuple, Union
 
